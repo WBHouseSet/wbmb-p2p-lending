@@ -6,6 +6,8 @@ import {
   formatUnits,
 } from "ethers";
 import "./style.css";
+import { demoPriceReport } from "./prices.mjs";
+import { toReport, hashRawData, submitReport } from "./report-signing.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
@@ -301,23 +303,26 @@ async function refresh() {
   if (!contracts || loading) return;
   loading = true;
   try {
-    const [oc, lc, low, current, observed, block] = await Promise.all([
-      contracts.lending.offerCount(),
-      contracts.lending.loanCount(),
-      contracts.oracle.weekLow(),
-      contracts.oracle.current(),
-      contracts.oracle.observedAt(),
-      read.getBlock("latest"),
-    ]);
+    const [oc, lc, low, current, validUntil, windowEnd, round, block] =
+      await Promise.all([
+        contracts.lending.offerCount(),
+        contracts.lending.loanCount(),
+        contracts.oracle.weekLow(),
+        contracts.oracle.current(),
+        contracts.oracle.validUntil(),
+        contracts.oracle.windowEnd(),
+        contracts.oracle.lastRoundId(),
+        read.getBlock("latest"),
+      ]);
     latest = block.timestamp;
     $("#offer-count").textContent = oc.toString();
     $("#loan-count").textContent = lc.toString();
     $("#week-price").textContent = fmt(low);
     $("#current-price").textContent = fmt(current);
     $("#price-state").textContent =
-      latest - Number(observed) > 7200
+      latest > Number(validUntil)
         ? "가격 만료 · 신규 체결 중단"
-        : `갱신 ${date(observed)}`;
+        : `round ${round} · 관측 ${date(windowEnd)} · 서명 ${config.oracle.threshold}/${config.oracle.reporters.length}`;
     const ids = (n) =>
       Array.from(
         { length: Math.min(Number(n), limit) },
@@ -711,9 +716,28 @@ async function labAction(seconds) {
       await read.send("evm_increaseTime", [seconds]);
       await read.send("evm_mine", []);
     }
-    const reporter = await read.getSigner(0);
+    // Local reporters sign a synthetic report; the contract verifies threshold signatures.
+    const pr = demoPriceReport(
+      Number((await read.getBlock("latest")).timestamp),
+    );
+    const report = {
+      ...toReport(pr, {
+        roundId: Number(await contracts.oracle.lastRoundId()) + 1,
+        validUntil: pr.windowEnd + Number(config.oracle.maxAge),
+        rawDataHash: hashRawData([], []),
+      }),
+      dexLow: low,
+      cexLow: low,
+      dexCurrent: current,
+      cexCurrent: current,
+    };
+    const signers = await Promise.all(
+      config.oracle.reporterIndices
+        .slice(0, config.oracle.threshold)
+        .map((i) => read.getSigner(i)),
+    );
     await (
-      await contracts.oracle.connect(reporter).setPrices(low, current)
+      await submitReport(contracts.oracle.connect(signers[0]), report, signers)
     ).wait();
     await refresh();
     status(
@@ -745,6 +769,7 @@ async function init() {
   if (
     config.chainId !== 31337 ||
     config.demo !== true ||
+    config.oracle?.contract !== "SignedPricePolicy" ||
     !localHost(new URL(config.rpcUrl).hostname)
   )
     throw new Error(
@@ -759,7 +784,7 @@ async function init() {
     lending: "P2PLending",
     usdt: "MockToken",
     wbmb: "MockToken",
-    oracle: "MockPricePolicy",
+    oracle: "SignedPricePolicy",
     burner: "MockFeeBurner",
   };
   for (const [key, name] of Object.entries(names)) {

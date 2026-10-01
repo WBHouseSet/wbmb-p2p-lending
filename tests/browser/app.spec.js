@@ -80,9 +80,17 @@ test("lender partially funds borrower, price drop settles in WBMB, fee burn rema
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();
   await page.locator(".lab summary").click();
+  await expect(page.locator("#price-state")).toContainText("서명 2/3");
+  const round = Number(
+    (await page.locator("#price-state").textContent()).match(/round (\d+)/)[1],
+  );
   await page.locator("#lab-price").fill("94");
   await page.locator("#set-price").click();
   await expect(page.locator("#status")).toContainText("모의 가격을 반영");
+  await expect(page.locator("#price-state")).toContainText(
+    `round ${round + 1}`,
+  );
+  await expect(page.locator("#current-price")).toContainText("94");
   await page.locator('[data-loan="2"] [data-action="settle"]').click();
   await expect(page.locator("#confirm-body")).toContainText(
     "USDT가 지급되는 것이 아니며",
