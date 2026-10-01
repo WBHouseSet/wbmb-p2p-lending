@@ -2,7 +2,13 @@ import { describe, it, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { network } from "hardhat";
 import { BrowserProvider } from "ethers";
-import { deployFixture, deployContract, us, wb } from "../scripts/deploy.mjs";
+import {
+  deployFixture,
+  deployContract,
+  publishPricesWith,
+  us,
+  wb,
+} from "../scripts/deploy.mjs";
 
 describe("P2P lending on a real local EVM", () => {
   let c, f, snap;
@@ -27,7 +33,7 @@ describe("P2P lending on a real local EVM", () => {
   const now = async () =>
     Number((await f.provider.getBlock("latest")).timestamp);
   const refresh = async (low = 100, current = 100) =>
-    tx(f.oracle.setPrices(us(low), us(current)));
+    f.publishPrices(us(low), us(current));
   async function advance(seconds) {
     await f.provider.send("evm_increaseTime", [seconds]);
     await f.provider.send("evm_mine", []);
@@ -352,10 +358,16 @@ describe("P2P lending on a real local EVM", () => {
   });
   it("oracle reporter access and token precision are enforced", async () => {
     await assert.rejects(
-      f.oracle.connect(f.borrower).setPrices(us(100), us(100)),
-      /REPORTER_ONLY/,
+      publishPricesWith(
+        f.provider,
+        f.oracle,
+        [f.borrower, f.lender],
+        us(100),
+        us(100),
+      ),
+      /BAD_SIGNER/,
     );
-    await assert.rejects(f.oracle.setPrices(0, us(100)), /BAD_PRICE/);
+    await assert.rejects(f.publishPrices(0n, us(100)), /BAD_PRICE/);
     const wrong = await deployContract("MockToken", f.admin, [
       "Wrong USDT",
       "X",

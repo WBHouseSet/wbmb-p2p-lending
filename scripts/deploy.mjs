@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import { ContractFactory, parseUnits } from "ethers";
 import { demoPriceReport } from "../src/prices.mjs";
+import {
+  POLICY_ID,
+  toReport,
+  hashRawData,
+  submitReport,
+} from "../src/report-signing.mjs";
 
 export const us = (x) => parseUnits(String(x), 18);
 export const wb = (x) => parseUnits(String(x), 8);
@@ -20,6 +26,36 @@ export async function assertLocal(provider) {
     throw new Error("로컬 체인 31337만 허용합니다.");
   await provider.send("hardhat_metadata", []); // reject a remote chain merely reusing this ID
 }
+// Local reporters are node accounts 4-6; any two must sign each report.
+export const REPORTER_INDICES = [4, 5, 6];
+export const THRESHOLD = 2;
+export const MAX_AGE = 7200;
+/// Publishes a synthetic report in which both sources show `low`/`current` unless overridden.
+export async function publishPricesWith(
+  provider,
+  oracle,
+  signers,
+  low,
+  current,
+  overrides = {},
+) {
+  const pr = demoPriceReport(
+    Number((await provider.getBlock("latest")).timestamp),
+  );
+  const report = {
+    ...toReport(pr, {
+      roundId: Number(await oracle.lastRoundId()) + 1,
+      validUntil: pr.windowEnd + MAX_AGE,
+      rawDataHash: hashRawData([], []),
+    }),
+    dexLow: low,
+    cexLow: low,
+    dexCurrent: current,
+    cexCurrent: current,
+    ...overrides,
+  };
+  return (await submitReport(oracle, report, signers)).wait();
+}
 export async function deployFixture(provider, { seed = false } = {}) {
   await assertLocal(provider);
   const accounts = await Promise.all(
@@ -37,11 +73,33 @@ export async function deployFixture(provider, { seed = false } = {}) {
     "dWBMB",
     8,
   ]);
-  const oracle = await deployContract("MockPricePolicy", admin);
+  const reporters = await Promise.all(
+    REPORTER_INDICES.map((i) => provider.getSigner(i)),
+  );
+  const reporterAddresses = await Promise.all(
+    reporters.map((r) => r.getAddress()),
+  );
+  const oracle = await deployContract("SignedPricePolicy", admin, [
+    reporterAddresses,
+    THRESHOLD,
+    POLICY_ID,
+    10000,
+    1000,
+    MAX_AGE,
+  ]);
   const report = demoPriceReport(
     Number((await provider.getBlock("latest")).timestamp),
   );
-  await (await oracle.setPrices(report.weekLow, report.current)).wait();
+  const publishPrices = (low, current, overrides) =>
+    publishPricesWith(
+      provider,
+      oracle,
+      reporters.slice(0, THRESHOLD),
+      low,
+      current,
+      overrides,
+    );
+  await publishPrices(report.weekLow, report.current);
   const burner = await deployContract("MockFeeBurner", admin, [
     usdt.target,
     wbmb.target,
@@ -102,6 +160,9 @@ export async function deployFixture(provider, { seed = false } = {}) {
     lending,
     terms,
     report,
+    reporters,
+    reporterAddresses,
+    publishPrices,
   };
 }
 export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
@@ -119,7 +180,16 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
       lending: f.lending.target,
     },
     demoAccounts: f.addresses.slice(1),
-    pricePolicy: "모의 7일 · 30분 구간평균 최저가 (실제 시장 데이터 아님)",
+    oracle: {
+      contract: "SignedPricePolicy",
+      reporters: f.reporterAddresses,
+      reporterIndices: REPORTER_INDICES,
+      threshold: THRESHOLD,
+      policyId: POLICY_ID,
+      maxAge: MAX_AGE,
+    },
+    pricePolicy:
+      "서명 보고서 2-of-3 · 모의 7일 30분 구간평균 최저가 (실제 시장 데이터 아님)",
     report: f.report,
   };
   fs.writeFileSync(
