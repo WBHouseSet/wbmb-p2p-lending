@@ -134,7 +134,55 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     );
   });
 
+  it("refuses to overwrite an existing deployment record", async () => {
+    await assert.rejects(
+      deployBsc({
+        rpcUrl: url,
+        secret: wallet.privateKey,
+        broadcast: true,
+        outDir,
+        confirmations: 1,
+        log,
+      }),
+      /이미 배포 기록/,
+    );
+  });
+
+  it("rejects an RPC that is not chain 56 and unusable fee wallets before sending anything", async () => {
+    const other = await network.createServer("default", "127.0.0.1", 18558);
+    await other.listen();
+    try {
+      await assert.rejects(
+        deployBsc({
+          rpcUrl: "http://127.0.0.1:18558",
+          secret: wallet.privateKey,
+          broadcast: true,
+          outDir,
+          log,
+        }),
+        /56/,
+      );
+    } finally {
+      await other.close();
+    }
+    const nonce = await local.getTransactionCount(wallet.address);
+    for (const bad of ["0x1234", BSC.usdt, BSC.wbmb, ZeroAddress])
+      await assert.rejects(
+        deployBsc({
+          rpcUrl: url,
+          secret: wallet.privateKey,
+          feeWallet: bad,
+          broadcast: true,
+          outDir: outDir + "-x",
+          log,
+        }),
+        /FEE_WALLET/,
+      );
+    assert.equal(await local.getTransactionCount(wallet.address), nonce);
+  });
+
   it("never prints or stores the private key, and accepts a separate fee wallet", async () => {
+    outDir = fs.mkdtempSync(path.join(os.tmpdir(), "wbmb-deploy-"));
     const other = Wallet.createRandom().address;
     const r = await deployBsc({
       rpcUrl: url,

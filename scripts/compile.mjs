@@ -44,6 +44,8 @@ export function compile() {
   if (out.errors?.some((e) => e.severity === "error"))
     throw new Error("Solidity compilation failed");
   fs.mkdirSync("artifacts", { recursive: true });
+  // Standard JSON input, kept for source verification on a block explorer.
+  fs.writeFileSync("artifacts/solc-input.json", JSON.stringify(input) + "\n");
   fs.mkdirSync("public", { recursive: true });
   const abis = {};
   for (const [source, contracts] of Object.entries(out.contracts)) {

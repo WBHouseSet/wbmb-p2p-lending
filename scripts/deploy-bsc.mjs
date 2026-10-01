@@ -21,6 +21,7 @@ import {
 } from "ethers";
 import { BSC } from "../config/bsc.mjs";
 import { artifact } from "./deploy.mjs";
+import { compile } from "./compile.mjs";
 
 const TOKEN_ABI = [
   "function decimals() view returns (uint8)",
@@ -73,9 +74,20 @@ export async function deployBsc({
     }
     const deployer = loadDeployer(secret, provider);
     const from = deployer ? await deployer.getAddress() : null;
+    if (
+      feeWallet !== undefined &&
+      (!isAddress(feeWallet) ||
+        [BSC.usdt, BSC.wbmb, ZeroAddress].includes(getAddress(feeWallet)))
+    )
+      throw new Error(
+        "FEE_WALLET 주소가 올바르지 않습니다. 직접 관리하는 지갑 주소여야 합니다.",
+      );
     const fee = feeWallet ? getAddress(feeWallet) : from;
-    if (feeWallet && !isAddress(feeWallet))
-      throw new Error("FEE_WALLET 주소가 올바르지 않습니다.");
+    const recordFile = path.join(outDir, "bsc.json");
+    if (broadcast && fs.existsSync(recordFile))
+      throw new Error(
+        `이미 배포 기록이 있습니다: ${recordFile}. 다시 배포하려면 이 파일을 먼저 다른 곳으로 옮기세요.`,
+      );
     const args = [
       BSC.usdt,
       BSC.wbmb,
@@ -133,6 +145,8 @@ export async function deployBsc({
     const receipt = await contract.deploymentTransaction().wait(confirmations);
     if (receipt.status !== 1) throw new Error("배포 거래가 실패했습니다.");
     const address = await contract.getAddress();
+    // Printed before any further RPC call so the address is never lost to a flaky read.
+    log(`컨트랙트   ${address} (블록 ${receipt.blockNumber}) · 설정 확인 중…`);
     // Read back what was actually deployed instead of trusting the inputs.
     const [usdt, wbmb, policy, vault, feeBps] = await Promise.all([
       contract.usdt(),
@@ -174,12 +188,9 @@ export async function deployBsc({
       constructorArgs: args.map(String),
     };
     fs.mkdirSync(outDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(outDir, "bsc.json"),
-      JSON.stringify(record, null, 2) + "\n",
-    );
+    fs.writeFileSync(recordFile, JSON.stringify(record, null, 2) + "\n");
     log(`배포 완료  ${address} (블록 ${receipt.blockNumber})`);
-    log(`기록       ${path.join(outDir, "bsc.json")}`);
+    log(`기록       ${recordFile}`);
     return { broadcast: true, ...record };
   } finally {
     provider.destroy();
@@ -206,6 +217,7 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
 }
 
 if (process.argv[1]?.endsWith("deploy-bsc.mjs")) {
+  compile(); // never deploy a stale artifact
   const file = process.env.DEPLOYER_KEY_FILE;
   const secret = file
     ? fs.readFileSync(file, "utf8")
