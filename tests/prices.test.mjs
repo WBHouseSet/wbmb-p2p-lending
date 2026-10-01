@@ -73,6 +73,19 @@ test("requires conversion policy and exact positive bigint values", () => {
     assert.throws(() => buildPriceReport(f));
   }
 });
+test("report exposes raw per-source lows and currents", () => {
+  const f = fixture();
+  f.dex[100].price = 95n * 10n ** 18n;
+  f.cex[5].price = 97n * 10n ** 18n;
+  f.conversionBps = 9000; // cex values must stay raw, before conversion
+  f.dex = f.dex.map((row) => ({ ...row, price: (row.price * 9n) / 10n }));
+  const r = buildPriceReport(f);
+  assert.equal(r.dexLow, (95n * 10n ** 18n * 9n) / 10n);
+  assert.equal(r.dexCurrent, 90n * 10n ** 18n);
+  assert.equal(r.cexLow, 97n * 10n ** 18n);
+  assert.equal(r.cexCurrent, 100n * 10n ** 18n);
+  assert.equal(r.weekLow, (95n * 10n ** 18n * 9n) / 10n);
+});
 test("demo report is clearly synthetic with correct scale", () => {
   const r = demoPriceReport(18001000);
   assert.match(r.policy, /synthetic/);

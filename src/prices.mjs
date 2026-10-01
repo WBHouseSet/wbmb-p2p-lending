@@ -55,7 +55,8 @@ export function buildPriceReport({
     });
   }
   const d = validate(dex),
-    c = validate(cex).map((p) => (p * BigInt(conversionBps)) / 10000n);
+    cRaw = validate(cex),
+    c = cRaw.map((p) => (p * BigInt(conversionBps)) / 10000n);
   for (let i = 0; i < d.length; i++) {
     if (c[i] === 0n) throw new Error("조정 가격 0");
     const lo = d[i] < c[i] ? d[i] : c[i],
@@ -74,6 +75,11 @@ export function buildPriceReport({
     weekLow,
     current,
     scale: SCALE,
+    // Per-source values for signed reports; cex stays raw (before conversionBps).
+    dexLow: min(d),
+    dexCurrent: d.at(-1),
+    cexLow: min(cRaw),
+    cexCurrent: cRaw.at(-1),
   };
 }
 
