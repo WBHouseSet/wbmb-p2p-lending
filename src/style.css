@@ -758,3 +758,7 @@ dialog::backdrop {
     margin: 7px 0 0 15px;
   }
 }
+.demo-banner.live {
+  background: #7a1f1f;
+  color: #fff;
+}

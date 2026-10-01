@@ -2,7 +2,11 @@ import { network } from "hardhat";
 import { JsonRpcProvider } from "ethers";
 import { createServer } from "vite";
 import { compile } from "./compile.mjs";
-import { deployFixture, saveDeployment } from "./deploy.mjs";
+import {
+  deployFixture,
+  deployFixedFixture,
+  saveDeployment,
+} from "./deploy.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -21,7 +25,11 @@ async function stop() {
   await rpc.close();
 }
 try {
-  const fixture = await deployFixture(provider, { seed: true });
+  // MARKET=fixed runs the oracle-free market (the mainnet configuration) with mock tokens.
+  const fixture =
+    process.env.MARKET === "fixed"
+      ? await deployFixedFixture(provider, { seed: true })
+      : await deployFixture(provider, { seed: true });
   const publicDir = path.resolve(`.local/web-${appPort}`);
   fs.mkdirSync(publicDir, { recursive: true });
   fs.copyFileSync("public/abis.json", path.join(publicDir, "abis.json"));

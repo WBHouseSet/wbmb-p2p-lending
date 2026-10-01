@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { ContractFactory, parseUnits } from "ethers";
+import { ContractFactory, ZeroAddress, parseUnits } from "ethers";
 import { demoPriceReport } from "../src/prices.mjs";
 import {
   POLICY_ID,
@@ -168,7 +168,83 @@ export async function deployFixture(provider, { seed = false } = {}) {
     publishPrices,
   };
 }
+export const FIXED_TERMS = {
+  aprBps: 1200,
+  haircutBps: 0,
+  liquidationBps: 0,
+  duration: 30 * 86400,
+  grace: 86400,
+  mode: 1,
+};
+/// Oracle-free market with mock tokens: the same contract configuration intended for mainnet.
+export async function deployFixedFixture(provider, { seed = false } = {}) {
+  await assertLocal(provider);
+  const accounts = await Promise.all(
+    [0, 1, 2, 3].map((i) => provider.getSigner(i)),
+  );
+  const [admin, borrower, lender] = accounts;
+  const addresses = await Promise.all(accounts.map((a) => a.getAddress()));
+  const usdt = await deployContract("MockToken", admin, [
+    "Demo USDT",
+    "dUSDT",
+    18,
+  ]);
+  const wbmb = await deployContract("MockToken", admin, [
+    "Demo WBMB",
+    "dWBMB",
+    8,
+  ]);
+  const feeWallet = addresses[0];
+  const lending = await deployContract("P2PLending", admin, [
+    usdt.target,
+    wbmb.target,
+    ZeroAddress,
+    feeWallet,
+    500,
+  ]);
+  for (const address of addresses) {
+    await (await usdt.mint(address, us(10000))).wait();
+    await (await wbmb.mint(address, wb(100))).wait();
+  }
+  if (seed) {
+    const block = await provider.getBlock("latest");
+    const expires = block.timestamp + 7 * 86400;
+    await (await wbmb.connect(borrower).approve(lending.target, wb(10))).wait();
+    await (
+      await lending
+        .connect(borrower)
+        .createOffer(0, us(900), wb(10), us(10), expires, FIXED_TERMS)
+    ).wait();
+    await (await usdt.connect(lender).approve(lending.target, us(1000))).wait();
+    await (
+      await lending
+        .connect(lender)
+        .createOffer(1, us(1000), wb(12), us(10), expires, FIXED_TERMS)
+    ).wait();
+  }
+  return { provider, accounts, addresses, usdt, wbmb, lending, feeWallet };
+}
 export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
+  if (!f.oracle) {
+    const fixed = {
+      version: 2,
+      demo: true,
+      oracleFree: true,
+      chainId: 31337,
+      rpcUrl,
+      deployedAt: new Date().toISOString(),
+      feeWallet: f.feeWallet,
+      feeBps: 500,
+      addresses: {
+        usdt: f.usdt.target,
+        wbmb: f.wbmb.target,
+        lending: f.lending.target,
+      },
+      demoAccounts: f.addresses.slice(1),
+    };
+    fs.writeFileSync(filename, JSON.stringify(fixed, null, 2) + "\n");
+    return;
+  }
   const config = {
     version: 1,
     demo: true,

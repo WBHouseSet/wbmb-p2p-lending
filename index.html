@@ -163,7 +163,8 @@
               required
           /></label>
           <label id="collateral-field"
-            >맡길 담보 (WBMB)<input
+            ><span id="collateral-label">맡길 담보 (WBMB)</span
+            ><input
               name="collateral"
               value="1"
               inputmode="decimal"
@@ -211,11 +212,7 @@
             </select></label
           >
         </div>
-        <p class="note">
-          체험 조건: 헤어컷 10% · 청산 기준 95% · 만기 유예 1일.<br />단리
-          APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 5%가 별도 소각
-          수수료입니다.
-        </p>
+        <p class="note" id="terms-note"></p>
         <p id="mode-warning" class="note warning" hidden>
           만기형은 가격이 내려가도 청산되지 않습니다. 만기·유예 후 미상환이면
           추가 담보를 포함한 남은 WBMB 전부가 대출자에게 넘어갑니다.

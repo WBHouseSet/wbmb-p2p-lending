@@ -32,10 +32,17 @@ describe("oracle-free fixed-ratio market", () => {
     await tx(
       lending
         .connect(borrower)
-        .createOffer(0, us(total), wb(collateral), us(10), (await now()) + 604800, {
-          ...TERMS,
-          ...terms,
-        }),
+        .createOffer(
+          0,
+          us(total),
+          wb(collateral),
+          us(10),
+          (await now()) + 604800,
+          {
+            ...TERMS,
+            ...terms,
+          },
+        ),
     );
     return lending.offerCount();
   }
@@ -44,10 +51,17 @@ describe("oracle-free fixed-ratio market", () => {
     await tx(
       lending
         .connect(lender)
-        .createOffer(1, us(total), wb(collateral), us(10), (await now()) + 604800, {
-          ...TERMS,
-          ...terms,
-        }),
+        .createOffer(
+          1,
+          us(total),
+          wb(collateral),
+          us(10),
+          (await now()) + 604800,
+          {
+            ...TERMS,
+            ...terms,
+          },
+        ),
     );
     return lending.offerCount();
   }
@@ -55,7 +69,9 @@ describe("oracle-free fixed-ratio market", () => {
     await tx(usdt.connect(who).approve(lending.target, us(amount)));
     const collateral = await lending.quoteFill(id, us(amount));
     await tx(
-      lending.connect(who).fillOffer(id, us(amount), collateral, (await now()) + 300),
+      lending
+        .connect(who)
+        .fillOffer(id, us(amount), collateral, (await now()) + 300),
     );
     return lending.loanCount();
   }
@@ -134,8 +150,14 @@ describe("oracle-free fixed-ratio market", () => {
     const create = (signer, side, collateral, terms) =>
       lending
         .connect(signer)
-        .createOffer(side, us(900), collateral, us(10), expiry, { ...TERMS, ...terms });
-    await assert.rejects(create(borrower, 0, wb(10), { mode: 0 }), /ORACLE_FREE_TERMS/);
+        .createOffer(side, us(900), collateral, us(10), expiry, {
+          ...TERMS,
+          ...terms,
+        });
+    await assert.rejects(
+      create(borrower, 0, wb(10), { mode: 0 }),
+      /ORACLE_FREE_TERMS/,
+    );
     await assert.rejects(
       create(borrower, 0, wb(10), { haircutBps: 1000, liquidationBps: 9500 }),
       /ORACLE_FREE_TERMS/,
@@ -168,7 +190,9 @@ describe("oracle-free fixed-ratio market", () => {
     assert.equal(await usdt.balanceOf(await addr(borrower)), us(10250));
     // a borrower can refuse a worse ratio than quoted
     await assert.rejects(
-      lending.connect(borrower).fillOffer(id, us(250), wb(3) - 1n, (await now()) + 300),
+      lending
+        .connect(borrower)
+        .fillOffer(id, us(250), wb(3) - 1n, (await now()) + 300),
       /COLLATERAL_SLIPPAGE/,
     );
     await tx(lending.connect(lender).closeOffer(id));
@@ -183,7 +207,14 @@ describe("oracle-free fixed-ratio market", () => {
     await tx(
       lending
         .connect(lender)
-        .createOffer(1, us(1000), 100000007n, us(10), (await now()) + 604800, TERMS),
+        .createOffer(
+          1,
+          us(1000),
+          100000007n,
+          us(10),
+          (await now()) + 604800,
+          TERMS,
+        ),
     );
     let sum = 0n;
     for (const amount of [333, 333, 334]) {
@@ -205,7 +236,10 @@ describe("oracle-free fixed-ratio market", () => {
     await tx(usdt.connect(borrower).approve(lending.target, total));
     await tx(lending.connect(borrower).repay(loan, us(900), total));
     assert.equal(await lending.claimableWBMB(await addr(borrower)), wb(10));
-    assert.equal(await lending.claimableUSDT(await addr(lender)), us(900) + interest);
+    assert.equal(
+      await lending.claimableUSDT(await addr(lender)),
+      us(900) + interest,
+    );
     assert.equal(await lending.feeBalance(), fee);
     const before_ = await usdt.balanceOf(await addr(feeWallet));
     await tx(lending.connect(lender2).flushFees()); // anyone may flush; destination is fixed

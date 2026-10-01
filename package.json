@@ -11,8 +11,10 @@
     "dev": "node scripts/dev.mjs",
     "build": "npm run compile && vite build",
     "test": "npm run compile && node --test --test-concurrency=1 tests/*.test.mjs",
-    "test:browser": "playwright test",
-    "check": "npm test && npm run build && npm run test:browser"
+    "test:browser": "playwright test && playwright test -c playwright.fixed.config.js",
+    "check": "npm test && npm run build && npm run test:browser",
+    "test:real": "npm run compile && node --test tests/real/*.test.mjs",
+    "deploy:bsc": "npm run compile && node scripts/deploy-bsc.mjs"
   },
   "dependencies": {
     "@openzeppelin/contracts": "5.6.1",
