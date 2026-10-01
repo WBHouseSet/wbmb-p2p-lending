@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f6f8f6" />
+    <title>WBMB Commons · P2P 대출</title>
+  </head>
+  <body>
+    <div class="demo-banner">
+      <span class="dot"></span> 로컬 체험 · 모의 WBMB / USDT · 실제 자금은
+      사용하지 않습니다
+    </div>
+    <header class="header shell">
+      <a class="brand" href="/" aria-label="WBMB Commons 홈"
+        ><span class="brand-icon">w</span
+        ><span>WBMB <strong>Commons</strong></span></a
+      >
+      <div class="wallet-actions">
+        <select id="demo-account" aria-label="체험 지갑 선택">
+          <option value="">체험 지갑 선택</option>
+        </select>
+        <select
+          id="wallet-provider"
+          aria-label="설치된 지갑 선택"
+          hidden
+        ></select>
+        <button id="connect" class="button outline">지갑 연결</button>
+      </div>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">COMMUNITY-OWNED CREDIT</p>
+          <h1>조건은 우리가.<br />거래는 투명하게.</h1>
+          <p class="hero-copy">
+            WBMB를 맡기고 빌리거나, USDT를 빌려주세요.<br />금리와 기간을 직접
+            정하고, 원하는 만큼 참여하세요.
+          </p>
+          <button id="open-offer" class="button primary">
+            거래 제안하기 <span>↗</span>
+          </button>
+        </div>
+        <aside class="principles">
+          <div class="orbit"><span>WBMB</span><i>⇄</i><span>USDT</span></div>
+          <p>사람과 사람 사이의 대출</p>
+          <div class="principle-tags">
+            <span>직접 정하는 금리</span><span>소액 참여</span
+            ><span>개발자 수익 0</span>
+          </div>
+          <small
+            >정상 상환은 USDT로, 담보 정산은 WBMB로.<br />USDT 원금 회수를
+            보장하지 않습니다.</small
+          >
+        </aside>
+      </section>
+      <section class="metrics" aria-label="시장 정보">
+        <div>
+          <span>7일 구간평균 최저가 · 모의</span
+          ><strong id="week-price">—</strong><small>USDT / WBMB</small>
+        </div>
+        <div>
+          <span>현재 평가가격 · 모의</span><strong id="current-price">—</strong
+          ><small id="price-state">가격 확인 중</small>
+        </div>
+        <div>
+          <span>게시된 거래</span><strong id="offer-count">—</strong
+          ><small>온체인 게시 누계</small>
+        </div>
+        <div>
+          <span>성사된 대출</span><strong id="loan-count">—</strong
+          ><small>부분 체결별 독립 계약</small>
+        </div>
+      </section>
+      <div id="status" role="status" aria-live="polite">
+        로컬 체인에 연결하고 있습니다…
+      </div>
+      <section id="wallet-panel" class="wallet-panel" hidden>
+        <div>
+          <span id="account-label"></span><small id="account-address"></small>
+        </div>
+        <div id="wallet-balances"></div>
+        <button id="disconnect" class="text-button">연결 해제</button>
+      </section>
+      <section class="market">
+        <div class="market-heading">
+          <div>
+            <p class="eyebrow">THE MARKETPLACE</p>
+            <h2>나에게 맞는 거래를 찾아보세요</h2>
+          </div>
+          <button id="refresh" class="button outline small">새로고침 ↻</button>
+        </div>
+        <nav class="tabs" aria-label="거래 구분">
+          <button data-tab="borrow" class="active" aria-pressed="true">
+            빌리기</button
+          ><button data-tab="lend" aria-pressed="false">빌려주기</button
+          ><button data-tab="mine" aria-pressed="false">내 거래</button
+          ><button data-tab="burn" aria-pressed="false">소각 내역</button>
+        </nav>
+        <div id="tab-description" class="tab-description"></div>
+        <div id="cards" class="cards"></div>
+        <button id="load-more" class="button outline" hidden>
+          이전 거래 더 보기
+        </button>
+      </section>
+      <details class="lab">
+        <summary>
+          로컬 시나리오 실험실 <span>모의 가격 · 시간 변경</span>
+        </summary>
+        <div class="lab-body">
+          <p>
+            현재 체험 체인에서만 작동합니다. 시간을 이동한 뒤 기존 모의 가격의
+            유효기간을 갱신합니다.
+          </p>
+          <label
+            >현재 WBMB 가격
+            <input
+              id="lab-price"
+              inputmode="decimal"
+              value="100"
+              aria-label="모의 가격" /></label
+          ><button id="set-price" class="button outline small">가격 반영</button
+          ><button id="advance-day" class="button outline small">
+            1일 경과</button
+          ><button id="advance-month" class="button outline small">
+            31일 경과
+          </button>
+        </div>
+      </details>
+      <footer>
+        <span>WBMB Commons · 로컬 프로토타입 v0.1</span
+        ><span>공개 규칙. 분리된 담보. 개인키는 내 지갑에.</span>
+      </footer>
+    </main>
+    <dialog id="offer-dialog">
+      <form id="offer-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">YOUR TERMS</p>
+            <h2>새 거래 제안</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            data-close="offer-dialog"
+            aria-label="닫기"
+          >
+            ×
+          </button>
+        </div>
+        <div class="form-grid">
+          <label class="full"
+            >거래 방향<select name="side">
+              <option value="0">WBMB를 맡기고 USDT 빌리기</option>
+              <option value="1">USDT 빌려주기</option>
+            </select></label
+          >
+          <label
+            >총 대출 한도 (USDT)<input
+              name="total"
+              value="90"
+              inputmode="decimal"
+              required
+          /></label>
+          <label id="collateral-field"
+            >맡길 담보 (WBMB)<input
+              name="collateral"
+              value="1"
+              inputmode="decimal"
+          /></label>
+          <label
+            >최소 참여액 (USDT)<input
+              name="minFill"
+              value="10"
+              inputmode="decimal"
+              required
+          /></label>
+          <label
+            >연이율 APR (%)<input
+              name="apr"
+              value="12"
+              inputmode="decimal"
+              required
+          /></label>
+          <label
+            >대출 기간 (일)<input
+              name="duration"
+              type="number"
+              min="1"
+              max="365"
+              value="30"
+              required
+          /></label>
+          <label
+            >게시 유효기간 (일)<input
+              name="expiry"
+              type="number"
+              min="1"
+              max="90"
+              value="7"
+              required
+          /></label>
+          <label class="full"
+            >담보 정산 방식<select name="mode">
+              <option value="0">
+                가격 하락 또는 만기 미상환 · 초과담보 반환
+              </option>
+              <option value="1">
+                만기 미상환만 · 남은 담보 전부 대출자 귀속
+              </option>
+            </select></label
+          >
+        </div>
+        <p class="note">
+          체험 조건: 헤어컷 10% · 청산 기준 95% · 만기 유예 1일.<br />단리
+          APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 5%가 별도 소각
+          수수료입니다.
+        </p>
+        <p id="mode-warning" class="note warning" hidden>
+          만기형은 가격이 내려가도 청산되지 않습니다. 만기·유예 후 미상환이면
+          추가 담보를 포함한 남은 WBMB 전부가 대출자에게 넘어갑니다.
+        </p>
+        <button class="button primary full" type="submit">조건 확인하기</button>
+      </form>
+    </dialog>
+    <dialog id="confirm-dialog">
+      <div class="dialog-head"><h2 id="confirm-title">거래 확인</h2></div>
+      <div id="confirm-body"></div>
+      <p class="note">
+        토큰 사용 승인이 필요한 경우 승인 거래 후 본 거래가 진행됩니다. 개인키는
+        입력하지 않습니다.
+      </p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" class="button outline">취소</button
+        ><button id="confirm-submit" class="button primary">
+          확인하고 진행
+        </button>
+      </div>
+    </dialog>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>
