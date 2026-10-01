@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { network } from "hardhat";
 import {
+  HDNodeWallet,
   Contract,
   JsonRpcProvider,
   Wallet,
@@ -211,5 +212,38 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
         !e.message.includes("not-a-real-key-123") &&
         /키를 읽을 수 없습니다/.test(e.message),
     );
+  });
+
+  it("a mnemonic needs an explicit wallet index and expected address, so the first wallet is never used by accident", async () => {
+    const phrase = Wallet.createRandom().mnemonic.phrase;
+    const at = (n) =>
+      HDNodeWallet.fromPhrase(phrase, undefined, `m/44'/60'/0'/0/${n}`).address;
+    assert.equal(await loadDeployer(phrase, local, 1).getAddress(), at(1));
+    assert.notEqual(at(0), at(1));
+    // comment lines in a key file are ignored
+    assert.equal(
+      await loadDeployer(`# backup\n\n${phrase}\n`, local, 1).getAddress(),
+      at(1),
+    );
+    // no expected address: refused, whatever the index
+    await assert.rejects(
+      deployBsc({ rpcUrl: url, secret: phrase, index: 1, log }),
+      /DEPLOYER_EXPECT/,
+    );
+    // expected address of the second wallet, but the default (first) index would sign: refused
+    await assert.rejects(
+      deployBsc({ rpcUrl: url, secret: phrase, expectAddress: at(1), log }),
+      /서명 지갑이 예상 주소와 다릅니다/,
+    );
+    const r = await deployBsc({
+      rpcUrl: url,
+      secret: phrase,
+      index: 1,
+      expectAddress: at(1),
+      log,
+    });
+    assert.equal(r.from, at(1));
+    assert.equal(r.broadcast, false);
+    assert.equal(logs.join("\n").includes(phrase), false);
   });
 });

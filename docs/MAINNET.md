@@ -58,6 +58,10 @@ DEPLOYER_KEY_FILE=/경로/키파일 npm run deploy:bsc -- --broadcast
 npm run build:live
 ```
 
+- 키 파일이 니모닉이면 지갑 순번과 주소를 함께 지정해야 한다. 스크립트는 서명 지갑이 그 주소가 아니면 아무것도 보내지 않는다. 같은 니모닉의 첫 번째 지갑(다른 용도로 쓰는 지갑)이 실수로 서명하는 것을 막기 위해서다.
+  ```bash
+  DEPLOYER_KEY_FILE=/경로/키파일 DEPLOYER_INDEX=1 DEPLOYER_EXPECT=0x두번째지갑주소 npm run deploy:bsc
+  ```
 - 수수료 지갑을 따로 두려면 `FEE_WALLET=0x…`를 함께 준다. 배포 후에는 바꿀 수 없다.
 - 3번이 끝나면 `deployments/bsc.json`에 컨트랙트 주소·거래 해시·생성자 인자가 기록된다. 스크립트는 배포된 컨트랙트의 설정을 다시 읽어 예상과 다르면 실패로 처리한다.
 - `dist-live/`는 정적 파일이다. 아무 정적 호스팅에 올리면 된다. 화면은 접속 시 컨트랙트의 실제 설정(오라클 없음, 수수료 지갑, 토큰 주소)이 설정 파일과 같은지 확인하고 다르면 열리지 않는다.

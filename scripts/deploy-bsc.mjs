@@ -4,6 +4,8 @@
 //   Dry run with your wallet's numbers:       DEPLOYER_KEY_FILE=/path/key npm run deploy:bsc
 //   Real deployment (spends real BNB):        DEPLOYER_KEY_FILE=/path/key npm run deploy:bsc -- --broadcast
 //
+// For a mnemonic, DEPLOYER_INDEX picks the wallet (1 = second) and DEPLOYER_EXPECT must be
+// that wallet's address; the script refuses to sign with any other address.
 // The key file holds a hex private key or a mnemonic. It is read at run time, never
 // printed, never written anywhere. FEE_WALLET defaults to the deployer address.
 import fs from "node:fs";
@@ -28,12 +30,27 @@ const TOKEN_ABI = [
   "function symbol() view returns (string)",
 ];
 
-export function loadDeployer(secret, provider) {
-  const text = String(secret || "").trim();
+const isMnemonic = (text) => text.includes(" ");
+// First line of a key file that is not blank or a `#` comment.
+const secretLine = (secret) =>
+  String(secret || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith("#")) || "";
+
+/// `index` selects the wallet of a mnemonic (0 = first, 1 = second, as wallet apps list them).
+export function loadDeployer(secret, provider, index = 0) {
+  const text = secretLine(secret);
   if (!text) return null;
+  if (!Number.isInteger(index) || index < 0 || index > 99)
+    throw new Error("DEPLOYER_INDEX 는 0~99 사이 정수여야 합니다.");
   try {
-    return text.includes(" ")
-      ? HDNodeWallet.fromPhrase(text).connect(provider)
+    return isMnemonic(text)
+      ? HDNodeWallet.fromPhrase(
+          text,
+          undefined,
+          `m/44'/60'/0'/0/${index}`,
+        ).connect(provider)
       : new Wallet(text.startsWith("0x") ? text : "0x" + text, provider);
   } catch {
     // Never echo the secret or the library's message, which may quote it.
@@ -46,6 +63,8 @@ export function loadDeployer(secret, provider) {
 export async function deployBsc({
   rpcUrl = BSC.rpcUrl,
   secret,
+  index = 0,
+  expectAddress,
   feeWallet,
   broadcast = false,
   outDir = "deployments",
@@ -72,7 +91,23 @@ export async function deployBsc({
         `토큰 확인  ${name} ${address} (${await token.symbol()}, ${decimals} decimals)`,
       );
     }
-    const deployer = loadDeployer(secret, provider);
+    const deployer = loadDeployer(secret, provider, index);
+    if (deployer) {
+      // A mnemonic holds many wallets (the first may be a busy trading wallet). The caller
+      // must name the one they mean, and nothing proceeds unless the key resolves to it.
+      if (isMnemonic(secretLine(secret)) && !expectAddress)
+        throw new Error(
+          "니모닉을 쓸 때는 DEPLOYER_EXPECT 에 사용할 지갑 주소를 반드시 지정해야 합니다.",
+        );
+      if (
+        expectAddress &&
+        (!isAddress(expectAddress) ||
+          getAddress(expectAddress) !== (await deployer.getAddress()))
+      )
+        throw new Error(
+          "서명 지갑이 예상 주소와 다릅니다. DEPLOYER_INDEX 와 DEPLOYER_EXPECT 를 확인하세요. 아무것도 전송하지 않았습니다.",
+        );
+    }
     const from = deployer ? await deployer.getAddress() : null;
     if (
       feeWallet !== undefined &&
@@ -225,6 +260,8 @@ if (process.argv[1]?.endsWith("deploy-bsc.mjs")) {
   deployBsc({
     rpcUrl: process.env.BSC_RPC_URL || BSC.rpcUrl,
     secret,
+    index: Number(process.env.DEPLOYER_INDEX || 0),
+    expectAddress: process.env.DEPLOYER_EXPECT,
     feeWallet: process.env.FEE_WALLET,
     broadcast: process.argv.includes("--broadcast"),
   }).catch((e) => {
