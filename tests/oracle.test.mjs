@@ -1,7 +1,13 @@
 import { describe, it, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { network } from "hardhat";
-import { BrowserProvider, Wallet, ZeroHash, keccak256, toUtf8Bytes } from "ethers";
+import {
+  BrowserProvider,
+  Wallet,
+  ZeroHash,
+  keccak256,
+  toUtf8Bytes,
+} from "ethers";
 import { deployContract } from "../scripts/deploy.mjs";
 import { demoPriceReport, BUCKET_SECONDS } from "../src/prices.mjs";
 import {
@@ -9,6 +15,7 @@ import {
   domainFor,
   toReport,
   hashRawData,
+  hashSyntheticData,
   collectSignatures,
   submitReport,
 } from "../src/report-signing.mjs";
@@ -60,21 +67,48 @@ describe("SignedPricePolicy", () => {
 
   it("constructor rejects bad reporter sets, thresholds and parameters", async () => {
     const r = addresses();
-    await assert.rejects(deploy([[], 1, POLICY_ID, 10000, 1000, MAX_AGE]), /BAD_REPORTERS/);
-    await assert.rejects(deploy([[r[0], r[0]], 1, POLICY_ID, 10000, 1000, MAX_AGE]), /BAD_REPORTERS/);
-    await assert.rejects(deploy([r, 4, POLICY_ID, 10000, 1000, MAX_AGE]), /BAD_THRESHOLD/);
-    await assert.rejects(deploy([r, 0, POLICY_ID, 10000, 1000, MAX_AGE]), /BAD_THRESHOLD/);
-    await assert.rejects(deploy([r, 2, ZeroHash, 10000, 1000, MAX_AGE]), /BAD_POLICY/);
-    await assert.rejects(deploy([r, 2, POLICY_ID, 0, 1000, MAX_AGE]), /BAD_CONVERSION/);
-    await assert.rejects(deploy([r, 2, POLICY_ID, 10000, 10001, MAX_AGE]), /BAD_DIVERGENCE/);
-    await assert.rejects(deploy([r, 2, POLICY_ID, 10000, 1000, 60]), /BAD_MAX_AGE/);
+    await assert.rejects(
+      deploy([[], 1, POLICY_ID, 10000, 1000, MAX_AGE]),
+      /BAD_REPORTERS/,
+    );
+    await assert.rejects(
+      deploy([[r[0], r[0]], 1, POLICY_ID, 10000, 1000, MAX_AGE]),
+      /BAD_REPORTERS/,
+    );
+    await assert.rejects(
+      deploy([r, 4, POLICY_ID, 10000, 1000, MAX_AGE]),
+      /BAD_THRESHOLD/,
+    );
+    await assert.rejects(
+      deploy([r, 0, POLICY_ID, 10000, 1000, MAX_AGE]),
+      /BAD_THRESHOLD/,
+    );
+    await assert.rejects(
+      deploy([r, 2, ZeroHash, 10000, 1000, MAX_AGE]),
+      /BAD_POLICY/,
+    );
+    await assert.rejects(
+      deploy([r, 2, POLICY_ID, 0, 1000, MAX_AGE]),
+      /BAD_CONVERSION/,
+    );
+    await assert.rejects(
+      deploy([r, 2, POLICY_ID, 10000, 10001, MAX_AGE]),
+      /BAD_DIVERGENCE/,
+    );
+    await assert.rejects(
+      deploy([r, 2, POLICY_ID, 10000, 1000, 60]),
+      /BAD_MAX_AGE/,
+    );
     assert.deepEqual([...(await oracle.reporters())], r);
     assert.equal(await oracle.threshold(), 2n);
   });
 
   it("accepts a 2-of-3 report, stores the min of sources and emits the round", async () => {
     const report = await baseReport({
-      dexLow: 100n * E, cexLow: 99n * E, dexCurrent: 103n * E, cexCurrent: 104n * E,
+      dexLow: 100n * E,
+      cexLow: 99n * E,
+      dexCurrent: 103n * E,
+      cexCurrent: 104n * E,
     });
     const receipt = await submit(report, [reporters[2], reporters[0]]); // unsorted input
     const ev = receipt.logs
@@ -95,13 +129,24 @@ describe("SignedPricePolicy", () => {
 
   it("applies the conversion factor and rejects zero adjusted prices", async () => {
     const o2 = await deploy([addresses(), 2, POLICY_ID, 5000, 10000, MAX_AGE]);
+    // conversion must change which source is lower: 100 * 50% = 50 < dex 60
     const r = await baseReport({
-      dexLow: 50n * E, cexLow: 100n * E, dexCurrent: 50n * E, cexCurrent: 100n * E,
+      dexLow: 60n * E,
+      cexLow: 100n * E,
+      dexCurrent: 70n * E,
+      cexCurrent: 120n * E,
     });
     await tx(submitReport(o2, r, reporters.slice(0, 2)));
     assert.equal(await o2.weekLow(), 50n * E);
+    assert.equal(await o2.current(), 60n * E);
     await assert.rejects(
-      tx(submitReport(o2, { ...r, roundId: 2, cexLow: 1n }, reporters.slice(0, 2))),
+      tx(
+        submitReport(
+          o2,
+          { ...r, roundId: 2, cexLow: 1n },
+          reporters.slice(0, 2),
+        ),
+      ),
       /BAD_PRICE/,
     );
   });
@@ -109,13 +154,22 @@ describe("SignedPricePolicy", () => {
   it("rejects insufficient, foreign, duplicated and unsorted signatures", async () => {
     const report = await baseReport();
     const d = await domain();
-    await assert.rejects(submit(report, [reporters[0]]), /NOT_ENOUGH_SIGNATURES/);
+    await assert.rejects(
+      submit(report, [reporters[0]]),
+      /NOT_ENOUGH_SIGNATURES/,
+    );
     const outsider = Wallet.createRandom().connect(provider);
-    await assert.rejects(submit(report, [reporters[0], outsider]), /BAD_SIGNER/);
+    await assert.rejects(
+      submit(report, [reporters[0], outsider]),
+      /BAD_SIGNER/,
+    );
     const [one] = await collectSignatures(d, report, [reporters[0]]);
     await assert.rejects(tx(oracle.submit(report, [one, one])), /BAD_SIGNER/);
     const sorted = await collectSignatures(d, report, reporters.slice(0, 2));
-    await assert.rejects(tx(oracle.submit(report, [sorted[1], sorted[0]])), /BAD_SIGNER/);
+    await assert.rejects(
+      tx(oracle.submit(report, [sorted[1], sorted[0]])),
+      /BAD_SIGNER/,
+    );
     await assert.rejects(tx(oracle.submit(report, ["0x1234", sorted[0]])));
   });
 
@@ -123,14 +177,25 @@ describe("SignedPricePolicy", () => {
     const report = await baseReport();
     const { chainId } = await provider.getNetwork();
     const wrongChain = await collectSignatures(
-      domainFor(Number(chainId) + 1, oracle.target), report, reporters.slice(0, 2),
+      domainFor(Number(chainId) + 1, oracle.target),
+      report,
+      reporters.slice(0, 2),
     );
     await assert.rejects(tx(oracle.submit(report, wrongChain)), /BAD_SIGNER/);
     const wrongContract = await collectSignatures(
-      domainFor(chainId, reporters[0].address), report, reporters.slice(0, 2),
+      domainFor(chainId, reporters[0].address),
+      report,
+      reporters.slice(0, 2),
     );
-    await assert.rejects(tx(oracle.submit(report, wrongContract)), /BAD_SIGNER/);
-    const good = await collectSignatures(await domain(), report, reporters.slice(0, 2));
+    await assert.rejects(
+      tx(oracle.submit(report, wrongContract)),
+      /BAD_SIGNER/,
+    );
+    const good = await collectSignatures(
+      await domain(),
+      report,
+      reporters.slice(0, 2),
+    );
     await assert.rejects(
       tx(oracle.submit({ ...report, dexLow: report.dexLow - 1n }, good)),
       /BAD_SIGNER/,
@@ -142,8 +207,19 @@ describe("SignedPricePolicy", () => {
     await submit(report);
     await assert.rejects(submit(report), /OLD_ROUND/);
     await assert.rejects(submit({ ...report, roundId: 0 }), /OLD_ROUND/);
+    // a skipped or mistyped round must not be able to freeze the immutable market
+    await assert.rejects(submit({ ...report, roundId: 3 }), /ROUND_GAP/);
     await assert.rejects(
-      submit({ ...report, roundId: 2, policyId: keccak256(toUtf8Bytes("other")) }),
+      submit({ ...report, roundId: 2n ** 64n - 1n }),
+      /ROUND_GAP/,
+    );
+    await submit({ ...report, roundId: 2 });
+    await assert.rejects(
+      submit({
+        ...report,
+        roundId: 2,
+        policyId: keccak256(toUtf8Bytes("other")),
+      }),
       /BAD_POLICY/,
     );
   });
@@ -151,7 +227,11 @@ describe("SignedPricePolicy", () => {
   it("rejects malformed windows, validity and coverage", async () => {
     const r = await baseReport();
     await assert.rejects(
-      submit({ ...r, windowEnd: r.windowEnd + 1, windowStart: r.windowStart + 1 }),
+      submit({
+        ...r,
+        windowEnd: r.windowEnd + 1,
+        windowStart: r.windowStart + 1,
+      }),
       /BAD_WINDOW/,
     );
     await assert.rejects(
@@ -169,18 +249,57 @@ describe("SignedPricePolicy", () => {
       /BAD_WINDOW/,
     );
     // underflow guard: a window shorter than 7 days must fail cleanly, not panic
-    await assert.rejects(submit({ ...r, windowEnd: 1800, windowStart: 0 }), /BAD_WINDOW/);
-    await assert.rejects(submit({ ...r, validUntil: r.windowEnd + MAX_AGE + 1 }), /BAD_VALIDITY/);
-    await assert.rejects(submit({ ...r, validUntil: (await now()) - 1 }), /BAD_VALIDITY/);
+    await assert.rejects(
+      submit({ ...r, windowEnd: 1800, windowStart: 0 }),
+      /BAD_WINDOW/,
+    );
+    await assert.rejects(
+      submit({ ...r, validUntil: r.windowEnd + MAX_AGE + 1 }),
+      /BAD_VALIDITY/,
+    );
+    await assert.rejects(
+      submit({ ...r, validUntil: (await now()) - 1 }),
+      /BAD_VALIDITY/,
+    );
     await assert.rejects(submit({ ...r, bucketCount: 335 }), /BAD_COVERAGE/);
     await assert.rejects(submit({ ...r, dexCurrent: 0n }), /BAD_PRICE/);
-    await assert.rejects(submit({ ...r, cexLow: 10n ** 30n + 1n }), /BAD_PRICE/);
+    await assert.rejects(
+      submit({ ...r, cexLow: 10n ** 30n + 1n }),
+      /BAD_PRICE/,
+    );
   });
 
   it("rejects source divergence beyond the limit, per pair", async () => {
-    await assert.rejects(submit(await baseReport({ dexLow: 100n * E, cexLow: 111n * E })), /DIVERGENCE/);
-    await assert.rejects(submit(await baseReport({ dexCurrent: 111n * E, cexCurrent: 100n * E })), /DIVERGENCE/);
+    await assert.rejects(
+      submit(await baseReport({ dexLow: 100n * E, cexLow: 111n * E })),
+      /DIVERGENCE/,
+    );
+    await assert.rejects(
+      submit(await baseReport({ dexCurrent: 111n * E, cexCurrent: 100n * E })),
+      /DIVERGENCE/,
+    );
     await submit(await baseReport({ dexLow: 100n * E, cexLow: 110n * E })); // exactly 10% allowed
+  });
+
+  it("raw data hashes commit to the published inputs", async () => {
+    const row = { start: 0, end: 1800, price: 100n * E, valid: true };
+    assert.notEqual(
+      hashRawData([row], [row]),
+      hashRawData([{ ...row, price: 99n * E }], [row]),
+    );
+    const a = {
+      windowEnd: 1800,
+      dexLow: 1n,
+      dexCurrent: 2n,
+      cexLow: 1n,
+      cexCurrent: 2n,
+    };
+    assert.equal(hashSyntheticData(a), hashSyntheticData({ ...a }));
+    assert.notEqual(
+      hashSyntheticData(a),
+      hashSyntheticData({ ...a, dexLow: 3n }),
+    );
+    assert.notEqual(hashSyntheticData(a), hashRawData([], []));
   });
 
   it("prices() is stale before any report and after validUntil; a new round revives it", async () => {

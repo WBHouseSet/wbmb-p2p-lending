@@ -34,9 +34,30 @@ export function domainFor(chainId, verifyingContract) {
 }
 
 export function hashRawData(dex, cex) {
-  const rows = (r) => r.map((x) => [x.start, x.end, x.price.toString(), x.valid]);
+  const rows = (r) =>
+    r.map((x) => [x.start, x.end, x.price.toString(), x.valid]);
   return keccak256(
     toUtf8Bytes(JSON.stringify({ dex: rows(dex), cex: rows(cex) })),
+  );
+}
+
+// Demo reports are not derived from bucket rows. Their hash commits to the published
+// values and is marked synthetic so it can never be mistaken for a hash of market data.
+export function hashSyntheticData({
+  windowEnd,
+  dexLow,
+  dexCurrent,
+  cexLow,
+  cexCurrent,
+}) {
+  return keccak256(
+    toUtf8Bytes(
+      JSON.stringify({
+        synthetic: true,
+        windowEnd: Number(windowEnd),
+        values: [dexLow, dexCurrent, cexLow, cexCurrent].map(String),
+      }),
+    ),
   );
 }
 
@@ -75,7 +96,9 @@ export async function collectSignatures(domain, report, signers) {
       sig: await signReport(s, domain, report),
     })),
   );
-  entries.sort((a, b) => (a.address < b.address ? -1 : a.address > b.address ? 1 : 0));
+  entries.sort((a, b) =>
+    a.address < b.address ? -1 : a.address > b.address ? 1 : 0,
+  );
   return entries.map((e) => e.sig);
 }
 

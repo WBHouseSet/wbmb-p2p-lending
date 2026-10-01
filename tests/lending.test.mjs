@@ -9,6 +9,7 @@ import {
   us,
   wb,
 } from "../scripts/deploy.mjs";
+import { hashSyntheticData } from "../src/report-signing.mjs";
 
 describe("P2P lending on a real local EVM", () => {
   let c, f, snap;
@@ -368,6 +369,17 @@ describe("P2P lending on a real local EVM", () => {
       /BAD_SIGNER/,
     );
     await assert.rejects(f.publishPrices(0n, us(100)), /BAD_PRICE/);
+    await f.publishPrices(us(98), us(99));
+    assert.equal(
+      await f.oracle.rawDataHash(),
+      hashSyntheticData({
+        windowEnd: Number(await f.oracle.windowEnd()),
+        dexLow: us(98),
+        cexLow: us(98),
+        dexCurrent: us(99),
+        cexCurrent: us(99),
+      }),
+    );
     const wrong = await deployContract("MockToken", f.admin, [
       "Wrong USDT",
       "X",

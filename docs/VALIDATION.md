@@ -7,7 +7,7 @@
 | 검증 | 결과 |
 |---|---|
 | `npm run check` | 성공 |
-| `npm test` | 38 passed: 로컬 EVM 22 + 서명 오라클 9 + 가격 계산 7 |
+| `npm test` | 39 passed: 로컬 EVM 22 + 서명 오라클 10 + 가격 계산 7 |
 | `npm run build` | 성공, Vite 정적 빌드 |
 | `npm run test:browser` | Chromium 6 passed |
 | `npm audit` | 알려진 취약점 0 (검증 시점) |
@@ -15,7 +15,7 @@
 | 로컬 faucet | 별도 테스트 공개 주소에 모의 자산·가스 지급 성공 |
 | 화면 확인 | 데스크톱 1440px / 모바일 390px, 모바일 가로 넘침 없음 |
 
-P2PLending 런타임 크기 12,171 bytes, SignedPricePolicy 5,162 bytes로 EIP-170 한도 24,576 bytes 이내. Solidity optimizer 200 runs, viaIR, EVM target Cancun. 컴파일러 오류 없음. 경고 5건은 모두 OpenZeppelin `ECDSA.sol` 내부의 `error` 식별자 예약어 예고이며 프로젝트 컨트랙트에서 나온 경고는 없음.
+P2PLending 런타임 크기 12,171 bytes, SignedPricePolicy 5,246 bytes로 EIP-170 한도 24,576 bytes 이내. Solidity optimizer 200 runs, viaIR, EVM target Cancun. 컴파일러 오류 없음. 경고 5건은 모두 OpenZeppelin `ECDSA.sol` 내부의 `error` 식별자 예약어 예고이며 프로젝트 컨트랙트에서 나온 경고는 없음.
 
 환경: Node.js 26.8.1, npm 11.19.0, Solidity 0.8.37, OpenZeppelin 5.6.1, Hardhat 3.18.0, ethers 6.17.0, Vite 8.3.1, Playwright 1.63.0. 정확한 의존성은 package-lock.json 참조.
 

@@ -24,7 +24,7 @@ struct Report {
 ```
 
 `submit(Report calldata r, bytes[] calldata sigs)` — 누구나 호출, 검사 순서:
-1. `policyId == 설정값`, `roundId > lastRoundId`.
+1. `policyId == 설정값`, `roundId == lastRoundId + 1` (작으면 `OLD_ROUND`, 건너뛰면 `ROUND_GAP` — 잘못된 큰 round 하나로 변경 불가능한 정책이 영구 정지되는 것을 방지).
 2. `windowEnd % 1800 == 0`, `windowStart == windowEnd - 336*1800`, `windowEnd <= block.timestamp`, `block.timestamp < validUntil <= windowEnd + maxAge`, `bucketCount == 336`.
 3. 네 가격 모두 `0 < p <= 1e30`.
 4. `sigs.length >= threshold`; 복구 주소가 엄격 오름차순이고 reporter 집합에 속함.

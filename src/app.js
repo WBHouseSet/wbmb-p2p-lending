@@ -7,7 +7,11 @@ import {
 } from "ethers";
 import "./style.css";
 import { demoPriceReport } from "./prices.mjs";
-import { toReport, hashRawData, submitReport } from "./report-signing.mjs";
+import {
+  toReport,
+  hashSyntheticData,
+  submitReport,
+} from "./report-signing.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
@@ -332,19 +336,17 @@ async function refresh() {
       Promise.all(
         ids(oc).map(async (id) => ({
           id,
-          ...(await contracts.lending
-            .getOffer(id)
-            .then((o) => ({
-              maker: o.maker,
-              side: Number(o.side),
-              closed: o.closed,
-              expiresAt: o.expiresAt,
-              total: o.total,
-              remaining: o.remaining,
-              minFill: o.minFill,
-              collateralRemaining: o.collateralRemaining,
-              terms: o.terms,
-            }))),
+          ...(await contracts.lending.getOffer(id).then((o) => ({
+            maker: o.maker,
+            side: Number(o.side),
+            closed: o.closed,
+            expiresAt: o.expiresAt,
+            total: o.total,
+            remaining: o.remaining,
+            minFill: o.minFill,
+            collateralRemaining: o.collateralRemaining,
+            terms: o.terms,
+          }))),
         })),
       ),
       Promise.all(
@@ -720,16 +722,19 @@ async function labAction(seconds) {
     const pr = demoPriceReport(
       Number((await read.getBlock("latest")).timestamp),
     );
-    const report = {
-      ...toReport(pr, {
-        roundId: Number(await contracts.oracle.lastRoundId()) + 1,
-        validUntil: pr.windowEnd + Number(config.oracle.maxAge),
-        rawDataHash: hashRawData([], []),
-      }),
+    const values = {
       dexLow: low,
       cexLow: low,
       dexCurrent: current,
       cexCurrent: current,
+    };
+    const report = {
+      ...toReport(pr, {
+        roundId: Number(await contracts.oracle.lastRoundId()) + 1,
+        validUntil: pr.windowEnd + Number(config.oracle.maxAge),
+        rawDataHash: hashSyntheticData({ windowEnd: pr.windowEnd, ...values }),
+      }),
+      ...values,
     };
     const signers = await Promise.all(
       config.oracle.reporterIndices

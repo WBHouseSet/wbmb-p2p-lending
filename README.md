@@ -132,7 +132,7 @@ npm audit
 
 브라우저 테스트도 실제 로컬 컨트랙트를 호출합니다. 지갑 연결 테스트의 EIP-1193 provider는 모의 공급자이며 실제 MetaMask/Rabby 확장 검증은 아닙니다. 테스트넷·메인넷·실제 WBMB 유동성에 대한 증거로 해석하지 않습니다.
 
-작성 시점 검증: EVM·오라클·가격 테스트 38개 + 브라우저 테스트 6개 통과, 웹 빌드 성공, npm audit 0건. [검증 기록](docs/VALIDATION.md) 참조. GitHub Actions 실행 설정도 포함합니다.
+작성 시점 검증: EVM·오라클·가격 테스트 39개 + 브라우저 테스트 6개 통과, 웹 빌드 성공, npm audit 0건. [검증 기록](docs/VALIDATION.md) 참조. GitHub Actions 실행 설정도 포함합니다.
 
 브라우저 테스트는 별도 체인·웹 포트와 `.local/web-5181` 설정을 사용하므로 기본 체험 화면과 자금 상태를 공유하지 않습니다. `npm run build` 산출물은 기본 로컬 체인을 한 번 배포한 뒤 생성해야 하며, 사용할 때도 해당 로컬 RPC가 실행 중이어야 거래할 수 있습니다. 사용자 지정 포트의 faucet은 `DEPLOYMENT_FILE=.local/web-5182/deployment.json node scripts/faucet.mjs 0xPUBLIC_ADDRESS`처럼 설정을 지정합니다.
 

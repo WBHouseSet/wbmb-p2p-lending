@@ -88,6 +88,8 @@ contract SignedPricePolicy is IPricePolicy, EIP712 {
     function submit(Report calldata r, bytes[] calldata sigs) external {
         require(r.policyId == policyId, "BAD_POLICY");
         require(r.roundId > lastRoundId, "OLD_ROUND");
+        // Sequential rounds: one mistyped huge roundId must not freeze this immutable policy.
+        require(r.roundId == uint256(lastRoundId) + 1, "ROUND_GAP");
         require(
             r.windowEnd >= WINDOW && r.windowEnd % BUCKET_SECONDS == 0 && r.windowEnd <= block.timestamp
                 && r.windowStart == r.windowEnd - WINDOW,

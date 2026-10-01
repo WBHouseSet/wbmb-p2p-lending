@@ -4,7 +4,7 @@ import { demoPriceReport } from "../src/prices.mjs";
 import {
   POLICY_ID,
   toReport,
-  hashRawData,
+  hashSyntheticData,
   submitReport,
 } from "../src/report-signing.mjs";
 
@@ -42,17 +42,20 @@ export async function publishPricesWith(
   const pr = demoPriceReport(
     Number((await provider.getBlock("latest")).timestamp),
   );
-  const report = {
-    ...toReport(pr, {
-      roundId: Number(await oracle.lastRoundId()) + 1,
-      validUntil: pr.windowEnd + MAX_AGE,
-      rawDataHash: hashRawData([], []),
-    }),
+  const values = {
     dexLow: low,
     cexLow: low,
     dexCurrent: current,
     cexCurrent: current,
     ...overrides,
+  };
+  const report = {
+    ...toReport(pr, {
+      roundId: Number(await oracle.lastRoundId()) + 1,
+      validUntil: pr.windowEnd + MAX_AGE,
+      rawDataHash: hashSyntheticData({ windowEnd: pr.windowEnd, ...values }),
+    }),
+    ...values,
   };
   return (await submitReport(oracle, report, signers)).wait();
 }
