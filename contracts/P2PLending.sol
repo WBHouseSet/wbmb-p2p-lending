@@ -8,8 +8,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IPricePolicy} from "./IPricePolicy.sol";
 
-/// Isolated fixed-term P2P loans. Prototype, not audited.
+/// Isolated fixed-term P2P loans. Not audited.
 /// No owner, upgrade, sweep, arbitrary recipient or fee-change function.
+/// With no price policy (address(0)) the market is oracle-free: the maker fixes the
+/// collateral amount for the whole offer and loans settle only after maturity + grace.
 contract P2PLending is ReentrancyGuard {
     using SafeERC20 for IERC20;
     uint256 public constant BPS = 10_000;
@@ -85,13 +87,14 @@ contract P2PLending is ReentrancyGuard {
     event FeesFlushed(uint256 amount);
 
     constructor(address usdt_, address wbmb_, address policy_, address vault_, uint256 feeBps_) {
-        require(usdt_ != wbmb_ && policy_.code.length > 0 && vault_.code.length > 0, "BAD_CONFIG");
+        require(usdt_ != wbmb_ && vault_ != address(0) && (policy_ == address(0) || policy_.code.length > 0), "BAD_CONFIG");
         require(IERC20Metadata(usdt_).decimals() == 18 && IERC20Metadata(wbmb_).decimals() == 8, "DECIMALS");
         require(feeBps_ <= 1000, "FEE_TOO_HIGH");
         usdt = IERC20(usdt_); wbmb = IERC20(wbmb_); pricePolicy = IPricePolicy(policy_);
         feeVault = vault_; feeBps = feeBps_;
     }
 
+    function oracleFree() public view returns (bool) { return address(pricePolicy) == address(0); }
     function getOffer(uint256 id) external view returns (Offer memory) { return offers[id]; }
     function getLoan(uint256 id) external view returns (Loan memory) { return loans[id]; }
 
@@ -101,8 +104,11 @@ contract P2PLending is ReentrancyGuard {
         require(total >= MIN_OFFER && total <= MAX_AMOUNT && minFill >= MIN_OFFER && minFill <= total, "BAD_AMOUNT");
         require(expiresAt > block.timestamp && expiresAt <= block.timestamp + 90 days, "BAD_EXPIRY");
         require(t.aprBps <= BPS && t.duration >= 1 hours && t.duration <= YEAR && t.grace <= 7 days, "BAD_TERM");
-        require(t.haircutBps >= 100 && t.haircutBps <= 9000 && t.liquidationBps < BPS && BPS - t.haircutBps < t.liquidationBps, "BAD_MARGIN");
-        if (side == Side.Borrow) require(collateral > 0 && collateral <= MAX_AMOUNT, "BAD_COLLATERAL");
+        bool fixedRatio = oracleFree();
+        if (fixedRatio) require(t.mode == Mode.MaturityOnlyAllCollateral && t.haircutBps == 0 && t.liquidationBps == 0, "ORACLE_FREE_TERMS");
+        else require(t.haircutBps >= 100 && t.haircutBps <= 9000 && t.liquidationBps < BPS && BPS - t.haircutBps < t.liquidationBps, "BAD_MARGIN");
+        // Borrow: collateral is escrowed now. Oracle-free Lend: collateral is what borrowers must post for the full offer.
+        if (side == Side.Borrow || fixedRatio) require(collateral > 0 && collateral <= MAX_AMOUNT, "BAD_COLLATERAL");
         else require(collateral == 0, "LEND_NO_COLLATERAL");
         id = ++offerCount;
         offers[id] = Offer(msg.sender, side, false, expiresAt, total, total, minFill, collateral, collateral, t);
@@ -120,7 +126,7 @@ contract P2PLending is ReentrancyGuard {
         if (o.side == Side.Borrow) {
             uint256 amount = o.collateralRemaining;
             o.collateralRemaining = 0; escrowWBMB -= amount; _creditWBMB(o.maker, amount);
-        } else { escrowUSDT -= o.remaining; _creditUSDT(o.maker, o.remaining); }
+        } else { o.collateralRemaining = 0; escrowUSDT -= o.remaining; _creditUSDT(o.maker, o.remaining); }
         o.remaining = 0;
         emit OfferClosed(id);
     }
@@ -129,9 +135,13 @@ contract P2PLending is ReentrancyGuard {
         Offer storage o = offers[id];
         require(o.maker != address(0) && !o.closed && block.timestamp < o.expiresAt, "OFFER_CLOSED");
         require(amount > 0 && amount <= o.remaining && (amount >= o.minFill || amount == o.remaining), "BAD_FILL");
-        (uint256 opening, uint256 current) = pricePolicy.prices();
-        require(opening > 0 && current > 0 && opening <= 1e30 && current <= 1e30, "BAD_PRICE");
-        if (o.side == Side.Borrow) {
+        bool fixedRatio = oracleFree();
+        uint256 opening; uint256 current;
+        if (!fixedRatio) {
+            (opening, current) = pricePolicy.prices();
+            require(opening > 0 && current > 0 && opening <= 1e30 && current <= 1e30, "BAD_PRICE");
+        }
+        if (o.side == Side.Borrow || fixedRatio) {
             // Cumulative rounding preserves the original escrow exactly across many fills.
             uint256 usedAfter = Math.mulDiv(o.collateralTotal, o.total - o.remaining + amount, o.total, Math.Rounding.Ceil);
             collateral = usedAfter - (o.collateralTotal - o.collateralRemaining);
@@ -139,6 +149,7 @@ contract P2PLending is ReentrancyGuard {
             collateral = Math.mulDiv(amount, WBMB_UNIT * BPS, opening * (BPS - o.terms.haircutBps), Math.Rounding.Ceil);
         }
         require(collateral > 0 && collateral <= MAX_AMOUNT, "BAD_COLLATERAL");
+        if (fixedRatio) return collateral;
         uint256 valueOpen = Math.mulDiv(collateral, opening, WBMB_UNIT);
         require(amount <= Math.mulDiv(valueOpen, BPS - o.terms.haircutBps, BPS), "INSUFFICIENT_COLLATERAL");
         uint256 atMaturity = amount + Math.mulDiv(amount, uint256(o.terms.aprBps) * o.terms.duration, BPS * YEAR, Math.Rounding.Ceil);
@@ -156,7 +167,7 @@ contract P2PLending is ReentrancyGuard {
         o.remaining -= amount;
         if (o.remaining == 0) o.closed = true;
         if (o.side == Side.Borrow) { o.collateralRemaining -= collateral; escrowWBMB -= collateral; }
-        else escrowUSDT -= amount;
+        else { if (oracleFree()) o.collateralRemaining -= collateral; escrowUSDT -= amount; }
         activeCollateral += collateral;
         loanId = ++loanCount;
         Loan storage l = loans[loanId];
