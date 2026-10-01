@@ -31,6 +31,14 @@ test("oracle-free market shows no price feed and a fee tab instead of burn", asy
     "1 WBMB당 90 USDT",
   );
   await expect(page.locator('[data-offer="1"]')).toContainText("만기 미상환");
+  await expect(page.locator('[data-offer="1"]')).toContainText("유예 1일");
+  await expect(page.locator(".principle-tags")).not.toContainText(
+    "개발자 수익 0",
+  );
+  await expect(page.locator(".principle-tags")).toContainText(
+    "수수료 이자의 5%",
+  );
+  await expect(page.locator("footer")).not.toContainText("프로토타입");
   expect(errors).toEqual([]);
 });
 
@@ -45,9 +53,28 @@ test("lender funds a borrow request, borrower repays, fee goes to the fee wallet
   await expect(page.locator("#confirm-body")).toContainText(
     "배정 담보: 1 WBMB",
   );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "내가 보내는 것: 90 USDT",
+  );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "담보 비율: 1 WBMB당 90 USDT",
+  );
+  await expect(page.locator("#confirm-body")).toContainText("상환 기한");
   await commit(page, "부분 체결 완료");
   await account(page, 1);
   await page.locator('[data-tab="mine"]').click();
+  await expect(
+    page.locator('[data-loan="1"] [data-action="topup"]'),
+  ).toHaveCount(0);
+  await expect(page.locator(".claim-box")).toBeVisible(); // "내 거래" finished rendering
+  await page.locator('[data-repay-amount="1"]').fill("40");
+  await page.locator('[data-loan="1"] [data-action="repay"]').click();
+  await expect(page.locator("#confirm-body")).toContainText(
+    "일부만 갚으면 담보는 풀리지 않습니다",
+  );
+  await page.locator("#confirm-cancel").click();
+  await expect(page.locator("#confirm-dialog")).not.toBeVisible();
+  await page.locator('[data-repay-amount="1"]').fill("90");
   await page.locator(".lab summary").click();
   await page.locator("#advance-day").click();
   await expect(page.locator("#status")).toContainText("1일이 경과");
@@ -75,6 +102,12 @@ test("borrower takes a lend offer at the maker's ratio, defaults, lender receive
   await page.locator('[data-offer="2"] [data-action="fill"]').click();
   await expect(page.locator("#confirm-body")).toContainText(
     "배정 담보: 3 WBMB",
+  );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "내가 보내는 것: 3 WBMB",
+  );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "내가 받는 것: 250 USDT",
   );
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();

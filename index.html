@@ -46,7 +46,7 @@
           <p>사람과 사람 사이의 대출</p>
           <div class="principle-tags">
             <span>직접 정하는 금리</span><span>소액 참여</span
-            ><span>개발자 수익 0</span>
+            ><span id="fee-tag">개발자 수익 0</span>
           </div>
           <small
             >정상 상환은 USDT로, 담보 정산은 WBMB로.<br />USDT 원금 회수를
@@ -128,7 +128,7 @@
         </div>
       </details>
       <footer>
-        <span>WBMB Commons · 로컬 프로토타입 v0.1</span
+        <span id="footer-version">WBMB Commons · 로컬 프로토타입 v0.1</span
         ><span>공개 규칙. 분리된 담보. 개인키는 내 지갑에.</span>
       </footer>
     </main>
@@ -164,10 +164,7 @@
           /></label>
           <label id="collateral-field"
             ><span id="collateral-label">맡길 담보 (WBMB)</span
-            ><input
-              name="collateral"
-              value="1"
-              inputmode="decimal"
+            ><input name="collateral" value="1" inputmode="decimal"
           /></label>
           <label
             >최소 참여액 (USDT)<input

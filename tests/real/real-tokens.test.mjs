@@ -212,4 +212,57 @@ describe("real BSC USDT and WBMB bytecode", () => {
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
     assert.equal(await usdt.balanceOf(lending.target), 0n);
   });
+
+  it("interest-only and partial repayments, then a stranger closes the expired offer for the maker", async () => {
+    await tx(null, wbmb.connect(borrower).approve(lending.target, wb(4)));
+    const expiry = (await now()) + 3600;
+    await tx(
+      null,
+      lending
+        .connect(borrower)
+        .createOffer(0, us(360), wb(4), us(10), expiry, TERMS),
+    );
+    const offer = await lending.offerCount();
+    await tx(null, usdt.connect(lender).approve(lending.target, us(180)));
+    await tx(
+      null,
+      lending
+        .connect(lender)
+        .fillOffer(offer, us(180), wb(2), (await now()) + 300),
+    );
+    const loan = await lending.loanCount();
+    await advance(10 * 86400);
+    await tx(null, usdt.connect(borrower).approve(lending.target, us(400)));
+    const [interest1] = await lending.quoteRepay(loan, 0);
+    await tx(null, lending.connect(borrower).repay(loan, 0, us(400))); // interest only
+    // the quote is one block old, so a second or two more interest has accrued
+    const paid = await lending.claimableUSDT(A.lender);
+    assert.ok(paid >= interest1 && paid - interest1 < us("0.0001"));
+    await tx(null, lending.connect(borrower).repay(loan, us(80), us(400))); // partial principal
+    const l = await lending.getLoan(loan);
+    assert.equal(l.principal, us(100));
+    assert.equal(l.collateral, wb(2)); // partial repayment releases no collateral
+    assert.equal(await lending.claimableWBMB(A.borrower), 0n);
+    await conserved();
+    // the unfilled half expired long ago; anyone may close it but only the maker is credited
+    await tx(null, lending.connect(lender).closeOffer(offer));
+    assert.equal(await lending.claimableWBMB(A.borrower), wb(2));
+    assert.equal(await lending.claimableWBMB(A.lender), 0n);
+    // an exact one-block-old quote is correctly rejected as slippage; a cap above it is accepted
+    const [, , stale] = await lending.quoteRepay(loan, us(100));
+    await advance(60);
+    await assert.rejects(
+      lending.connect(borrower).repay(loan, us(100), stale),
+      /REPAY_SLIPPAGE/,
+    );
+    await tx(null, lending.connect(borrower).repay(loan, us(100), us(400)));
+    const w0 = await wbmb.balanceOf(A.borrower);
+    await tx(null, lending.connect(borrower).claimWBMB());
+    assert.equal((await wbmb.balanceOf(A.borrower)) - w0, wb(4));
+    await tx(null, lending.connect(lender).claimUSDT());
+    await tx(null, lending.flushFees());
+    await conserved();
+    assert.equal(await wbmb.balanceOf(lending.target), 0n);
+    assert.equal(await usdt.balanceOf(lending.target), 0n);
+  });
 });

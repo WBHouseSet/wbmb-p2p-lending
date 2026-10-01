@@ -56,6 +56,8 @@ try {
     }
   }
   real.destroy();
+  // The rehearsal chain starts empty each run, so its previous record is meaningless.
+  fs.rmSync(`.local/rehearsal-${appPort}`, { recursive: true, force: true });
   const deployer = Wallet.createRandom();
   await local.send("hardhat_setBalance", [
     deployer.address,
@@ -86,6 +88,15 @@ try {
   );
   web = await createServer({
     publicDir,
+    define: {
+      __PINNED__: JSON.stringify({
+        chainId: record.chainId,
+        lending: record.lending,
+        usdt: record.usdt,
+        wbmb: record.wbmb,
+        feeWallet: record.feeWallet,
+      }),
+    },
     server: { host: "127.0.0.1", port: appPort, strictPort: true },
   });
   await web.listen();

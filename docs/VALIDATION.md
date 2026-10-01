@@ -38,3 +38,16 @@ P2PLending 런타임 크기 12,171 bytes, SignedPricePolicy 5,246 bytes로 EIP-1
 실제 로컬 EVM 트랜잭션과 브라우저 동작을 검증했다. 실제 WBMB/USDT, Uniswap·LBank 실시간 가격, 실제 MetaMask/Rabby 확장, 공개 테스트넷/메인넷은 검증하지 않았다. 자동화 지갑 provider는 테스트 구현이다. GitHub Actions 설정 파일은 추가했으나 GitHub 원격 실행은 하지 않았다. 이 검증은 독립 보안 감사가 아니다.
 
 화면 미리보기: [preview.png](preview.png). 실행 절차: [README](../README.md).
+
+## 실전 버전 추가 검증 (2026-10-01, feature/mainnet-v1)
+
+| 검증 | 결과 |
+|---|---|
+| `npm test` | 51 passed: 가격형 22 + 오라클 없는 시장 12 + 서명 오라클 10 + 가격 계산 7 |
+| `npm run test:real` | 12 passed: 실제 USDT·WBMB 코드 복제 4 + 배포 스크립트 리허설 8 |
+| `npm run test:browser` | 가격형 6 + 오라클 없는 시장 4 passed |
+| `npm run test:live` | 5 passed: 체인 ID 56 로컬 체인, 실제 토큰 코드, 모의 브라우저 지갑 |
+| `npm run deploy:bsc` (키 없이) | 실제 BSC 조회 성공, 전송 없음 |
+| `npm audit` | 알려진 취약점 0 |
+
+P2PLending 런타임 크기 13,084 bytes. 메인넷에는 아무것도 전송하지 않았다. 실제 MetaMask/Rabby 확장과 메인넷 전체 fork는 검증하지 않았다. 독립 리뷰 1회(감사 아님)의 지적과 처리는 [MAINNET.md](MAINNET.md) 6절에 있다.

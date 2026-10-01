@@ -68,6 +68,21 @@ test("live page warns about real funds and hides every demo control", async ({
   expect(errors).toEqual([]);
 });
 
+test("a deployment file that points at another contract is refused", async ({
+  page,
+}) => {
+  await page.route("**/deployment.json", async (route) => {
+    const response = await route.fetch();
+    const config = await response.json();
+    config.addresses.lending = "0x000000000000000000000000000000000000bEEF";
+    await route.fulfill({ response, json: config });
+  });
+  await page.goto("/");
+  await expect(page.locator("#status")).toContainText(
+    "허용되지 않은 배포 설정",
+  );
+});
+
 test("a wallet on the wrong network is not connected", async ({ page }) => {
   await wallet(page, 1, "0x1");
   await open(page);
@@ -89,6 +104,15 @@ test("borrower posts a request with real-token bytecode through a browser wallet
   await page.locator('input[name="total"]').fill("90");
   await page.locator('input[name="collateral"]').fill("1");
   await page.locator('#offer-form button[type="submit"]').click();
+  await expect(page.locator("#confirm-body")).toContainText(
+    "내가 보내는 것: 1 WBMB",
+  );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "담보 비율: 1 WBMB당 90 USDT",
+  );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "승인 대상 컨트랙트",
+  );
   await commit(page, "거래 게시 완료");
   await page.locator('[data-tab="lend"]').click();
   await expect(page.locator('[data-offer="1"]')).toContainText(

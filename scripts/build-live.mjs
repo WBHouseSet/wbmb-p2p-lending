@@ -23,7 +23,19 @@ fs.writeFileSync(
   JSON.stringify(liveWebConfig(record, process.env.BSC_RPC_URL), null, 2) +
     "\n",
 );
-await build({ publicDir, build: { outDir: "dist-live", emptyOutDir: true } });
+// Addresses are compiled into the bundle; the page refuses a deployment.json that differs.
+const pinned = {
+  chainId: record.chainId,
+  lending: record.lending,
+  usdt: record.usdt,
+  wbmb: record.wbmb,
+  feeWallet: record.feeWallet,
+};
+await build({
+  publicDir,
+  define: { __PINNED__: JSON.stringify(pinned) },
+  build: { outDir: "dist-live", emptyOutDir: true },
+});
 console.log(
   "\n실서비스용 정적 파일: dist-live/ (컨트랙트 " + record.lending + ")",
 );
