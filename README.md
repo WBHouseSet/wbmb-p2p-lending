@@ -67,6 +67,7 @@ node scripts/faucet.mjs 0xYOUR_PUBLIC_ADDRESS
 | 공급자 이자와 수수료 분리 / 개발자 배분 없음 | 구현 |
 | 7일 30분 구간 336개 검증·최저값 계산 | 순수 계산 모듈·테스트 구현, 합성 데이터 |
 | 가격 관측 지연 / 누락·괴리 거부 | 계산 모듈 및 로컬 가격 만료 처리 |
+| 서명 가격 보고서 오라클 (EIP-712, 2-of-3 서명, round·유효기한·336구간·소스 괴리 온체인 검사) | 구현, 합성 데이터·로컬 보고자 |
 | 실제 LBank/Uniswap v4 가격 수집·온체인 증명 | 미구현 |
 | 실제 WBMB 매입·소각 | 미구현. 로컬 모의 토큰의 burn만 구현 |
 | 메인넷/공개 테스트넷 배포, 외부 감사, 실제 지갑 실사용 검증 | 미수행 |
@@ -99,14 +100,15 @@ node scripts/faucet.mjs 0xYOUR_PUBLIC_ADDRESS
 contracts/
   P2PLending.sol           주문·대출·이자·담보·정산·수령
   IPricePolicy.sol         가격 인터페이스
+  SignedPricePolicy.sol    서명 가격 보고서 검증 (보고자·임계값 고정)
   mocks/
     MockToken.sol         로컬 전용 8/18자리 자산
-    MockPricePolicy.sol   로컬 전용 단일 보고자 가격
     MockFeeBurner.sol     로컬 모의 교환·공급량 소각
     FaultyToken.sol       전송 실패·세금·재진입 테스트 토큰
 src/
   app.js                  실제 로컬 컨트랙트와 연결된 웹 화면
   prices.mjs              7일 가격 보고서 계산·검증
+  report-signing.mjs      보고서 EIP-712 서명·제출
 scripts/
   compile.mjs             고정된 solc로 빌드·ABI 생성
   deploy.mjs              로컬 배포·모의 자금·예시 주문
@@ -130,13 +132,13 @@ npm audit
 
 브라우저 테스트도 실제 로컬 컨트랙트를 호출합니다. 지갑 연결 테스트의 EIP-1193 provider는 모의 공급자이며 실제 MetaMask/Rabby 확장 검증은 아닙니다. 테스트넷·메인넷·실제 WBMB 유동성에 대한 증거로 해석하지 않습니다.
 
-작성 시점 검증: EVM·가격 테스트 28개 + 브라우저 테스트 6개 통과, 웹 빌드 성공, npm audit 0건. [검증 기록](docs/VALIDATION.md) 참조. GitHub Actions 실행 설정도 포함합니다.
+작성 시점 검증: EVM·오라클·가격 테스트 38개 + 브라우저 테스트 6개 통과, 웹 빌드 성공, npm audit 0건. [검증 기록](docs/VALIDATION.md) 참조. GitHub Actions 실행 설정도 포함합니다.
 
 브라우저 테스트는 별도 체인·웹 포트와 `.local/web-5181` 설정을 사용하므로 기본 체험 화면과 자금 상태를 공유하지 않습니다. `npm run build` 산출물은 기본 로컬 체인을 한 번 배포한 뒤 생성해야 하며, 사용할 때도 해당 로컬 RPC가 실행 중이어야 거래할 수 있습니다. 사용자 지정 포트의 faucet은 `DEPLOYMENT_FILE=.local/web-5182/deployment.json node scripts/faucet.mjs 0xPUBLIC_ADDRESS`처럼 설정을 지정합니다.
 
 ## 자금 권한과 다음 단계
 
-`P2PLending`에는 owner·업그레이드·임의 인출·수수료 변경 함수가 없습니다. 토큰·가격 정책·수수료 수취 컨트랙트는 생성 시 고정됩니다. 다만 현재 가격 정책은 **로컬 모의 단일 보고자**이며, 실제 탈중앙 오라클 구현은 아닙니다. 모의 토큰·오라클·소각기는 생성자에서 chain 31337을 강제합니다. 실제 BSC 주소는 배포 설정에 사용하지 않습니다.
+`P2PLending`에는 owner·업그레이드·임의 인출·수수료 변경 함수가 없습니다. 토큰·가격 정책·수수료 수취 컨트랙트는 생성 시 고정됩니다. 가격 정책 `SignedPricePolicy`도 owner가 없으며 보고자 집합·서명 임계값·정책 ID·괴리 한도가 생성 시 고정됩니다. 보고서는 보고자 3명 중 2명의 EIP-712 서명이 있어야 반영되고, 제출은 누구나 할 수 있습니다. 다만 현재 보고자는 **로컬 노드의 테스트 계정**이고 보고서 내용은 합성 데이터입니다. 서명 검증은 데이터가 실제 거래소에서 왔다는 증명이 아닙니다. 모의 토큰·소각기는 생성자에서 chain 31337을 강제합니다. 실제 BSC 주소는 배포 설정에 사용하지 않습니다.
 
 실제 운영으로 가려면 청산 모드·가격 정책을 확정하고, 검증 가능한 가격 수집/보고·WBMB와 BMB 전환 위험·실제 토큰 전송/관리권·매입/소각 경로·오라클 장애 복구·독립 보안 검토를 완료해야 합니다. 자세한 내용은 [구현 기록](docs/IMPLEMENTATION.md), 제품 기준은 [원본 설계](docs/DESIGN.md)를 확인하세요.
 
