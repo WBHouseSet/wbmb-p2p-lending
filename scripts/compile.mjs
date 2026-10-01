@@ -19,7 +19,7 @@ export function compile() {
     settings: {
       optimizer: { enabled: true, runs: 200 },
       viaIR: true,
-      evmVersion: "shanghai",
+      evmVersion: "cancun",
       outputSelection: {
         "*": {
           "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"],
