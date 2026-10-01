@@ -7,7 +7,7 @@ import { deployContract, us, wb } from "../scripts/deploy.mjs";
 // Oracle-free market: no price policy, collateral ratio fixed by the maker, maturity-only settlement.
 describe("oracle-free fixed-ratio market", () => {
   let c, provider, admin, borrower, lender, lender2, feeWallet, addr;
-  let usdt, wbmb, lending, snap;
+  let usdt, wbmb, lending, snap, addr0;
   const TERMS = {
     aprBps: 1200,
     haircutBps: 0,
@@ -94,6 +94,7 @@ describe("oracle-free fixed-ratio market", () => {
       [0, 1, 2, 3, 7].map((i) => provider.getSigner(i)),
     );
     addr = async (s) => s.getAddress();
+    addr0 = await feeWallet.getAddress();
     usdt = await deployContract("MockToken", admin, ["Demo USDT", "dUSDT", 18]);
     wbmb = await deployContract("MockToken", admin, ["Demo WBMB", "dWBMB", 8]);
     lending = await deployContract("P2PLending", admin, [
@@ -282,5 +283,73 @@ describe("oracle-free fixed-ratio market", () => {
     await assert.rejects(lending.settle(loan), /NOT_ACTIVE/);
     assert.equal(await lending.claimableWBMB(await addr(borrower)), wb(1));
     await conserved();
+  });
+
+  it("requires at least one day of grace and rejects each stray margin field on its own", async () => {
+    await tx(wbmb.connect(borrower).approve(lending.target, wb(10)));
+    const expiry = (await now()) + 604800;
+    const create = (terms) =>
+      lending
+        .connect(borrower)
+        .createOffer(0, us(900), wb(10), us(10), expiry, {
+          ...TERMS,
+          ...terms,
+        });
+    await assert.rejects(create({ grace: 86399 }), /ORACLE_FREE_TERMS/);
+    await assert.rejects(create({ grace: 0 }), /ORACLE_FREE_TERMS/);
+    await assert.rejects(create({ haircutBps: 1 }), /ORACLE_FREE_TERMS/);
+    await assert.rejects(create({ liquidationBps: 1 }), /ORACLE_FREE_TERMS/);
+    await tx(create({ grace: 86400 }));
+  });
+
+  it("rejects a fee above 10% at deployment", async () => {
+    const args = (fee) => [usdt.target, wbmb.target, ZeroAddress, addr0, fee];
+    await assert.rejects(
+      deployContract("P2PLending", admin, args(1001)),
+      /FEE_TOO_HIGH/,
+    );
+    await deployContract("P2PLending", admin, args(1000));
+  });
+
+  it("collateral rounds up per cumulative fill and a fill that would get none is refused", async () => {
+    // 3 smallest WBMB units for 900 USDT: one unit per 300 USDT
+    await tx(wbmb.connect(borrower).approve(lending.target, 3n));
+    await tx(
+      lending
+        .connect(borrower)
+        .createOffer(0, us(900), 3n, us(10), (await now()) + 604800, TERMS),
+    );
+    assert.equal(await lending.quoteFill(1, us(100)), 1n); // ceil(3*100/900)
+    const first = await lend(1, 100);
+    assert.equal((await lending.getLoan(first)).collateral, 1n);
+    // cumulative 200 USDT still rounds to 1 unit in total, so this fill would be unsecured
+    await assert.rejects(lending.quoteFill(1, us(100)), /BAD_COLLATERAL/);
+    await tx(usdt.connect(lender).approve(lending.target, us(100)));
+    await assert.rejects(
+      lending.connect(lender).fillOffer(1, us(100), 10n, (await now()) + 300),
+      /BAD_COLLATERAL/,
+    );
+    assert.equal(await lending.quoteFill(1, us(250)), 1n); // cumulative 350 -> 2 units
+    assert.equal(await lending.quoteFill(1, us(800)), 2n); // the rest takes exactly what is left
+    await conserved();
+  });
+
+  it("indexes every offer and loan by account so none can scroll out of reach", async () => {
+    const offer = await borrowOffer(900, 10);
+    const a = await lend(offer, 90);
+    const b = await lend(offer, 180, lender2);
+    const B = await addr(borrower),
+      L = await addr(lender),
+      L2 = await addr(lender2);
+    assert.deepEqual([...(await lending.offerIdsOf(B))], [offer]);
+    assert.deepEqual([...(await lending.loanIdsOf(B))], [a, b]);
+    assert.deepEqual([...(await lending.loanIdsOf(L))], [a]);
+    assert.deepEqual([...(await lending.loanIdsOf(L2))], [b]);
+    assert.deepEqual([...(await lending.loanIdsOf(await addr(feeWallet)))], []);
+    const byLender = await lending.queryFilter(
+      lending.filters.LoanCreated(null, null, L2),
+    );
+    assert.equal(byLender.length, 1);
+    assert.equal(byLender[0].args.id, b);
   });
 });

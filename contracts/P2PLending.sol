@@ -68,6 +68,9 @@ contract P2PLending is ReentrancyGuard {
     uint256 public loanCount;
     mapping(uint256 => Offer) private offers;
     mapping(uint256 => Loan) private loans;
+    // Per-account ids so a wallet's positions stay findable however many others exist.
+    mapping(address => uint256[]) private offerIds;
+    mapping(address => uint256[]) private loanIds;
     mapping(address => uint256) public claimableUSDT;
     mapping(address => uint256) public claimableWBMB;
     uint256 public escrowUSDT;
@@ -79,7 +82,7 @@ contract P2PLending is ReentrancyGuard {
 
     event OfferCreated(uint256 indexed id, address indexed maker, Side side, uint256 total);
     event OfferClosed(uint256 indexed id);
-    event LoanCreated(uint256 indexed id, uint256 indexed offerId, address indexed borrower, address lender, uint256 principal, uint256 collateral);
+    event LoanCreated(uint256 indexed id, address indexed borrower, address indexed lender, uint256 offerId, uint256 principal, uint256 collateral);
     event CollateralAdded(uint256 indexed id, uint256 amount);
     event Repaid(uint256 indexed id, uint256 principal, uint256 interest, uint256 fee);
     event Settled(uint256 indexed id, uint256 lenderWBMB, uint256 borrowerWBMB, uint256 debt, uint256 price);
@@ -97,6 +100,8 @@ contract P2PLending is ReentrancyGuard {
     function oracleFree() public view returns (bool) { return address(pricePolicy) == address(0); }
     function getOffer(uint256 id) external view returns (Offer memory) { return offers[id]; }
     function getLoan(uint256 id) external view returns (Loan memory) { return loans[id]; }
+    function offerIdsOf(address account) external view returns (uint256[] memory) { return offerIds[account]; }
+    function loanIdsOf(address account) external view returns (uint256[] memory) { return loanIds[account]; }
 
     function createOffer(Side side, uint256 total, uint256 collateral, uint256 minFill, uint64 expiresAt, Terms calldata t)
         external nonReentrant returns (uint256 id)
@@ -105,12 +110,14 @@ contract P2PLending is ReentrancyGuard {
         require(expiresAt > block.timestamp && expiresAt <= block.timestamp + 90 days, "BAD_EXPIRY");
         require(t.aprBps <= BPS && t.duration >= 1 hours && t.duration <= YEAR && t.grace <= 7 days, "BAD_TERM");
         bool fixedRatio = oracleFree();
-        if (fixedRatio) require(t.mode == Mode.MaturityOnlyAllCollateral && t.haircutBps == 0 && t.liquidationBps == 0, "ORACLE_FREE_TERMS");
+        // Without price liquidation a late borrower loses everything, so a full day of grace is mandatory.
+        if (fixedRatio) require(t.mode == Mode.MaturityOnlyAllCollateral && t.haircutBps == 0 && t.liquidationBps == 0 && t.grace >= 1 days, "ORACLE_FREE_TERMS");
         else require(t.haircutBps >= 100 && t.haircutBps <= 9000 && t.liquidationBps < BPS && BPS - t.haircutBps < t.liquidationBps, "BAD_MARGIN");
         // Borrow: collateral is escrowed now. Oracle-free Lend: collateral is what borrowers must post for the full offer.
         if (side == Side.Borrow || fixedRatio) require(collateral > 0 && collateral <= MAX_AMOUNT, "BAD_COLLATERAL");
         else require(collateral == 0, "LEND_NO_COLLATERAL");
         id = ++offerCount;
+        offerIds[msg.sender].push(id);
         offers[id] = Offer(msg.sender, side, false, expiresAt, total, total, minFill, collateral, collateral, t);
         if (side == Side.Borrow) { escrowWBMB += collateral; _pull(wbmb, msg.sender, collateral); }
         else { escrowUSDT += total; _pull(usdt, msg.sender, total); }
@@ -170,6 +177,7 @@ contract P2PLending is ReentrancyGuard {
         else { if (oracleFree()) o.collateralRemaining -= collateral; escrowUSDT -= amount; }
         activeCollateral += collateral;
         loanId = ++loanCount;
+        loanIds[borrower].push(loanId); loanIds[lender].push(loanId);
         Loan storage l = loans[loanId];
         l.borrower = borrower; l.lender = lender; l.offerId = id;
         l.principal = amount; l.collateral = collateral; l.startedAt = uint64(block.timestamp);
@@ -178,7 +186,7 @@ contract P2PLending is ReentrancyGuard {
         if (o.side == Side.Borrow) _pull(usdt, lender, amount);
         else _pull(wbmb, borrower, collateral);
         _send(usdt, borrower, amount);
-        emit LoanCreated(loanId, id, borrower, lender, amount, collateral);
+        emit LoanCreated(loanId, borrower, lender, id, amount, collateral);
     }
 
     function addCollateral(uint256 id, uint256 amount) external nonReentrant {
