@@ -1,4 +1,5 @@
-// Deploys the oracle-free P2PLending market to BNB Smart Chain mainnet (chain 56).
+// Deploys a P2PLending market to BNB Smart Chain mainnet (chain 56): oracle-free by default,
+// or with the council price policy (--council, needs REPORTER=0x…).
 //
 //   Dry run (no key needed, sends nothing):   npm run deploy:bsc
 //   Dry run with your wallet's numbers:       DEPLOYER_KEY_FILE=/path/key npm run deploy:bsc
@@ -24,6 +25,7 @@ import {
 import { BSC } from "../config/bsc.mjs";
 import { artifact } from "./deploy.mjs";
 import { compile } from "./compile.mjs";
+import { COUNCIL_POLICY_ID } from "../src/council-signing.mjs";
 
 const TOKEN_ABI = [
   "function decimals() view returns (uint8)",
@@ -60,11 +62,24 @@ export function loadDeployer(secret, provider, index = 0) {
   }
 }
 
-// "main" is the market for real use. "test" is a separate market whose only difference is
-// short minimums, so a full default-and-settle cycle can be checked in minutes.
+// "main" is the oracle-free market for real use. "test" differs only in short minimums, so a
+// full default-and-settle cycle can be checked in minutes. The council profiles add a price
+// policy fed by the council price relay.
 export const PROFILES = {
   main: { file: "bsc.json", minDuration: 3600, minGrace: 86400 },
   test: { file: "bsc-test.json", minDuration: 300, minGrace: 300 },
+  council: {
+    file: "bsc-council.json",
+    minDuration: 3600,
+    minGrace: 86400,
+    council: BSC.council,
+  },
+  "council-test": {
+    file: "bsc-council-test.json",
+    minDuration: 300,
+    minGrace: 300,
+    council: { ...BSC.council, minInterval: 300, staleSettleDelay: 300 },
+  },
 };
 
 export async function deployBsc({
@@ -74,6 +89,7 @@ export async function deployBsc({
   index = 0,
   expectAddress,
   feeWallet,
+  reporter,
   broadcast = false,
   outDir = "deployments",
   confirmations = 3,
@@ -81,6 +97,8 @@ export async function deployBsc({
 } = {}) {
   const provider = new JsonRpcProvider(rpcUrl, BSC.chainId, {
     staticNetwork: true,
+    // Two deployments follow each other: a cached pending nonce would make the second reuse it.
+    cacheTimeout: -1,
   });
   try {
     if (BigInt(await provider.send("eth_chainId", [])) !== BigInt(BSC.chainId))
@@ -127,26 +145,51 @@ export async function deployBsc({
       );
     const fee = feeWallet ? getAddress(feeWallet) : from;
     if (!Object.hasOwn(PROFILES, profile))
-      throw new Error(
-        "알 수 없는 profile 입니다. main 또는 test 만 가능합니다.",
-      );
+      throw new Error("알 수 없는 profile 입니다.");
     const limits = PROFILES[profile];
+    const cp = limits.council;
+    if (
+      cp &&
+      (!isAddress(reporter) ||
+        [BSC.usdt, BSC.wbmb, ZeroAddress].includes(getAddress(reporter)))
+    )
+      throw new Error(
+        "REPORTER 에 가격 중계 지갑 주소를 지정해야 합니다. 직접 관리하는 지갑이어야 합니다.",
+      );
+    const policyArgs = cp && [
+      [getAddress(reporter)],
+      1,
+      COUNCIL_POLICY_ID,
+      cp.maxAge,
+      cp.maxChangeBps,
+      cp.minInterval,
+    ];
+    const policyArtifact = cp && artifact("CouncilPricePolicy");
+    const policyFactory =
+      cp &&
+      new ContractFactory(
+        policyArtifact.abi,
+        policyArtifact.bytecode,
+        deployer || provider,
+      );
     const recordFile = path.join(outDir, limits.file);
     if (broadcast && fs.existsSync(recordFile))
       throw new Error(
         `이미 배포 기록이 있습니다: ${recordFile}. 다시 배포하려면 이 파일을 먼저 다른 곳으로 옮기세요.`,
       );
-    const args = [
+    // Before the policy exists, a token address stands in so gas can still be estimated.
+    const lendingArgs = (policyAddress) => [
       BSC.usdt,
       BSC.wbmb,
-      ZeroAddress,
+      cp ? policyAddress : ZeroAddress,
       fee || "0x000000000000000000000000000000000000dEaD",
       BSC.feeBps,
       limits.minDuration,
       limits.minGrace,
-      0,
-      0,
+      cp ? cp.liquidationBonusBps : 0,
+      cp ? cp.staleSettleDelay : 0,
     ];
+    let args = lendingArgs(BSC.usdt);
     const a = artifact("P2PLending");
     const factory = new ContractFactory(
       a.abi,
@@ -154,10 +197,17 @@ export async function deployBsc({
       deployer || provider,
     );
     const request = await factory.getDeployTransaction(...args);
-    const gas = await provider.estimateGas({
+    const lendingGas = await provider.estimateGas({
       ...request,
       from: from || undefined,
     });
+    const policyGas = cp
+      ? await provider.estimateGas({
+          ...(await policyFactory.getDeployTransaction(...policyArgs)),
+          from: from || undefined,
+        })
+      : 0n;
+    const gas = lendingGas + policyGas;
     const gasPrice = (await provider.getFeeData()).gasPrice;
     const cost = gas * gasPrice;
     log(
@@ -188,8 +238,46 @@ export async function deployBsc({
       throw new Error(
         `BNB 잔액 부족: 최소 ${formatUnits((cost * 12n) / 10n, 18)} BNB 필요`,
       );
+    let policyAddress = ZeroAddress,
+      policyTxHash = null;
+    if (cp) {
+      const policy = await policyFactory.deploy(...policyArgs, {
+        gasLimit: (policyGas * 12n) / 10n,
+        gasPrice,
+      });
+      policyTxHash = policy.deploymentTransaction().hash;
+      log(`가격 컨트랙트 전송됨 ${policyTxHash} · 확정 대기 중…`);
+      const policyReceipt = await policy
+        .deploymentTransaction()
+        .wait(confirmations);
+      if (policyReceipt.status !== 1)
+        throw new Error("가격 컨트랙트 배포 거래가 실패했습니다.");
+      policyAddress = await policy.getAddress();
+      // Printed at once: if the next step fails this address is still on record in the log.
+      log(`가격 컨트랙트 ${policyAddress} (블록 ${policyReceipt.blockNumber})`);
+      const [isRep, threshold, maxAge, maxChange, minInterval] =
+        await Promise.all([
+          policy.isReporter(getAddress(reporter)),
+          policy.threshold(),
+          policy.maxAge(),
+          policy.maxChangeBps(),
+          policy.minInterval(),
+        ]);
+      if (
+        !isRep ||
+        threshold !== 1n ||
+        maxAge !== BigInt(cp.maxAge) ||
+        maxChange !== BigInt(cp.maxChangeBps) ||
+        minInterval !== BigInt(cp.minInterval)
+      )
+        throw new Error(
+          "배포된 가격 컨트랙트의 설정이 예상과 다릅니다. 사용하지 마세요: " +
+            policyAddress,
+        );
+      args = lendingArgs(policyAddress);
+    }
     const contract = await factory.deploy(...args, {
-      gasLimit: (gas * 12n) / 10n,
+      gasLimit: (lendingGas * 12n) / 10n,
       gasPrice,
     });
     const hash = contract.deploymentTransaction().hash;
@@ -200,24 +288,37 @@ export async function deployBsc({
     // Printed before any further RPC call so the address is never lost to a flaky read.
     log(`컨트랙트   ${address} (블록 ${receipt.blockNumber}) · 설정 확인 중…`);
     // Read back what was actually deployed instead of trusting the inputs.
-    const [usdt, wbmb, policy, vault, feeBps, minDuration, minGrace] =
-      await Promise.all([
-        contract.usdt(),
-        contract.wbmb(),
-        contract.pricePolicy(),
-        contract.feeVault(),
-        contract.feeBps(),
-        contract.minDuration(),
-        contract.minGrace(),
-      ]);
+    const [
+      usdt,
+      wbmb,
+      policy,
+      vault,
+      feeBps,
+      minDuration,
+      minGrace,
+      bonus,
+      staleDelay,
+    ] = await Promise.all([
+      contract.usdt(),
+      contract.wbmb(),
+      contract.pricePolicy(),
+      contract.feeVault(),
+      contract.feeBps(),
+      contract.minDuration(),
+      contract.minGrace(),
+      contract.liquidationBonusBps(),
+      contract.staleSettleDelay(),
+    ]);
     if (
       usdt !== BSC.usdt ||
       wbmb !== BSC.wbmb ||
-      policy !== ZeroAddress ||
+      policy !== policyAddress ||
       vault !== fee ||
       feeBps !== BigInt(BSC.feeBps) ||
       minDuration !== BigInt(limits.minDuration) ||
-      minGrace !== BigInt(limits.minGrace)
+      minGrace !== BigInt(limits.minGrace) ||
+      bonus !== BigInt(args[7]) ||
+      staleDelay !== BigInt(args[8])
     )
       throw new Error(
         "배포된 컨트랙트의 설정이 예상과 다릅니다. 사용하지 마세요: " + address,
@@ -234,7 +335,24 @@ export async function deployBsc({
       minGrace: limits.minGrace,
       usdt: BSC.usdt,
       wbmb: BSC.wbmb,
-      pricePolicy: ZeroAddress,
+      pricePolicy: policyAddress,
+      liquidationBonusBps: Number(args[7]),
+      staleSettleDelay: Number(args[8]),
+      ...(cp
+        ? {
+            policyTxHash,
+            council: {
+              reporter: getAddress(reporter),
+              policyId: COUNCIL_POLICY_ID,
+              maxAge: cp.maxAge,
+              maxChangeBps: cp.maxChangeBps,
+              minInterval: cp.minInterval,
+            },
+            policyConstructorArgs: policyArgs.map((a) =>
+              Array.isArray(a) ? a.map(String) : String(a),
+            ),
+          }
+        : {}),
       txHash: hash,
       blockNumber: receipt.blockNumber,
       gasUsed: receipt.gasUsed.toString(),
@@ -259,10 +377,13 @@ export async function deployBsc({
 
 /// Web config for a live deployment record (what the page fetches as /deployment.json).
 export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
+  const council = record.pricePolicy && record.pricePolicy !== ZeroAddress;
   return {
-    version: 2,
+    version: council ? 3 : 2,
     demo: false,
-    oracleFree: true,
+    ...(council
+      ? { policy: "council", liquidationBonusBps: record.liquidationBonusBps }
+      : { oracleFree: true }),
     chainId: record.chainId,
     rpcUrl,
     deployedAt: record.deployedAt,
@@ -272,6 +393,7 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
       usdt: record.usdt,
       wbmb: record.wbmb,
       lending: record.lending,
+      ...(council ? { oracle: record.pricePolicy } : {}),
     },
   };
 }
@@ -288,8 +410,15 @@ if (process.argv[1]?.endsWith("deploy-bsc.mjs")) {
     index: Number(process.env.DEPLOYER_INDEX || 0),
     expectAddress: process.env.DEPLOYER_EXPECT,
     feeWallet: process.env.FEE_WALLET,
+    reporter: process.env.REPORTER,
     broadcast: process.argv.includes("--broadcast"),
-    profile: process.argv.includes("--test-market") ? "test" : "main",
+    profile:
+      (process.argv.includes("--council") ? "council" : "") +
+        (process.argv.includes("--test-market")
+          ? process.argv.includes("--council")
+            ? "-test"
+            : "test"
+          : "") || "main",
   }).catch((e) => {
     console.error("실패:", e.shortMessage || e.message);
     process.exit(1);

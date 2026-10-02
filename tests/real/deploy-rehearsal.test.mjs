@@ -295,4 +295,99 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(await mainLending.minGrace(), 86400n);
     fs.rmSync(dir, { recursive: true, force: true });
   });
+
+  it("council profile needs a reporter address", async () => {
+    await assert.rejects(
+      deployBsc({ rpcUrl: url, profile: "council", log }),
+      /REPORTER/,
+    );
+    await assert.rejects(
+      deployBsc({ rpcUrl: url, profile: "council", reporter: BSC.usdt, log }),
+      /REPORTER/,
+    );
+  });
+
+  it("council dry run estimates both deployments and sends nothing", async () => {
+    const before = await local.getTransactionCount(wallet.address);
+    const r = await deployBsc({
+      rpcUrl: url,
+      profile: "council",
+      reporter: wallet.address,
+      secret: wallet.privateKey,
+      outDir,
+      log,
+    });
+    assert.equal(r.broadcast, false);
+    assert.ok(r.gas > 3_000_000n);
+    assert.equal(await local.getTransactionCount(wallet.address), before);
+    assert.equal(fs.existsSync(path.join(outDir, "bsc-council.json")), false);
+  });
+
+  it("council broadcast deploys the policy and the market and records both", async () => {
+    const reporter = Wallet.createRandom().address;
+    const r = await deployBsc({
+      rpcUrl: url,
+      profile: "council-test",
+      reporter,
+      secret: wallet.privateKey,
+      broadcast: true,
+      outDir,
+      confirmations: 1,
+      log,
+    });
+    const record = JSON.parse(
+      fs.readFileSync(path.join(outDir, "bsc-council-test.json"), "utf8"),
+    );
+    assert.equal(record.lending, r.lending);
+    assert.notEqual(record.pricePolicy, ZeroAddress);
+    assert.equal(record.liquidationBonusBps, 500);
+    assert.equal(record.staleSettleDelay, 300);
+    assert.equal(record.council.reporter, reporter);
+    assert.equal(record.council.minInterval, 300);
+    const lending = new Contract(
+      record.lending,
+      artifact("P2PLending").abi,
+      local,
+    );
+    assert.equal(await lending.pricePolicy(), record.pricePolicy);
+    assert.equal(await lending.oracleFree(), false);
+    assert.equal(await lending.liquidationBonusBps(), 500n);
+    assert.equal(await lending.minGrace(), 300n);
+    const policy = new Contract(
+      record.pricePolicy,
+      artifact("CouncilPricePolicy").abi,
+      local,
+    );
+    assert.equal(await policy.isReporter(reporter), true);
+    assert.equal(await policy.threshold(), 1n);
+    assert.equal(await policy.maxAge(), BigInt(6 * 86400));
+    assert.equal(await policy.maxChangeBps(), 3000n);
+    const web = liveWebConfig(record);
+    assert.equal(web.policy, "council");
+    assert.equal(web.oracleFree, undefined);
+    assert.equal(web.addresses.oracle, record.pricePolicy);
+    assert.equal(web.liquidationBonusBps, 500);
+    // The oracle-free record written earlier in this file is untouched.
+    assert.equal(
+      JSON.parse(fs.readFileSync(path.join(outDir, "bsc.json"), "utf8"))
+        .pricePolicy,
+      ZeroAddress,
+    );
+  });
+
+  it("council broadcast refuses to overwrite its record", async () => {
+    await assert.rejects(
+      deployBsc({
+        rpcUrl: url,
+        profile: "council-test",
+        reporter: wallet.address,
+        secret: wallet.privateKey,
+        broadcast: true,
+        outDir,
+        confirmations: 1,
+        log,
+      }),
+      /이미 배포 기록이 있습니다/,
+    );
+  });
 });
