@@ -18,6 +18,10 @@ import {
 } from "ethers";
 import { deployContract, us, wb } from "../../scripts/deploy.mjs";
 import { BSC } from "../../config/bsc.mjs";
+import {
+  COUNCIL_POLICY_ID,
+  submitCouncilReport,
+} from "../../src/council-signing.mjs";
 
 const ERC20 = [
   "function balanceOf(address) view returns (uint256)",
@@ -268,5 +272,122 @@ describe("real BSC USDT and WBMB bytecode", () => {
     await conserved();
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
     assert.equal(await usdt.balanceOf(lending.target), 0n);
+  });
+});
+
+describe("council-price market on real BSC USDT and WBMB bytecode", () => {
+  let c, provider, usdt, wbmb, lending, oracle, borrower, lender, reporter, A;
+  const TERMS = {
+    aprBps: 0,
+    haircutBps: 4000,
+    liquidationBps: 8000,
+    duration: 30 * 86400,
+    grace: 86400,
+    mode: 0,
+  };
+  const tx = async (p) => (await p).wait();
+  const now = async () => Number((await provider.getBlock("latest")).timestamp);
+  async function publish(price) {
+    const t = await now();
+    await tx(
+      submitCouncilReport(
+        oracle.connect(reporter),
+        {
+          policyId: COUNCIL_POLICY_ID,
+          roundId: Number(await oracle.lastRoundId()) + 1,
+          price: us(price),
+          confirmedAt: t,
+          validUntil: t + 6 * 86400 - 60,
+        },
+        [reporter],
+      ),
+    );
+  }
+
+  before(async () => {
+    c = await network.create();
+    provider = new BrowserProvider(c.provider, undefined, { cacheTimeout: -1 });
+    provider.pollingInterval = 10;
+    const real = new JsonRpcProvider(
+      process.env.BSC_RPC_URL || BSC.rpcUrl,
+      BSC.chainId,
+      { staticNetwork: true },
+    );
+    const [admin, b, l, f, r] = await Promise.all(
+      [0, 1, 2, 7, 4].map((i) => provider.getSigner(i)),
+    );
+    borrower = b;
+    lender = l;
+    reporter = r;
+    A = {
+      borrower: await b.getAddress(),
+      lender: await l.getAddress(),
+      fee: await f.getAddress(),
+    };
+    usdt = new Contract(BSC.usdt, ERC20, provider);
+    wbmb = new Contract(BSC.wbmb, ERC20, provider);
+    await installRealToken(provider, real, BSC.usdt);
+    await installRealToken(provider, real, BSC.wbmb);
+    real.destroy();
+    await give(provider, wbmb, A.borrower, wb(20));
+    await give(provider, usdt, A.lender, us(3000));
+    oracle = await deployContract("CouncilPricePolicy", admin, [
+      [await r.getAddress()],
+      1,
+      COUNCIL_POLICY_ID,
+      BSC.council.maxAge,
+      9000,
+      0,
+    ]);
+    await publish(100);
+    lending = await deployContract("P2PLending", admin, [
+      BSC.usdt,
+      BSC.wbmb,
+      oracle.target,
+      A.fee,
+      BSC.feeBps,
+      3600,
+      86400,
+      BSC.council.liquidationBonusBps,
+      BSC.council.staleSettleDelay,
+    ]);
+  });
+  after(async () => {
+    provider?.destroy();
+    await c?.close();
+  });
+
+  it("fills at the council price, settles with the bonus and pays out exact token amounts", async () => {
+    await tx(usdt.connect(lender).approve(lending.target, us(1000)));
+    await tx(
+      lending
+        .connect(lender)
+        .createOffer(1, us(1000), 0, us(10), (await now()) + 86400, TERMS),
+    );
+    const collateral = await lending.quoteFill(1, us(600));
+    assert.equal(collateral, wb(10));
+    await tx(wbmb.connect(borrower).approve(lending.target, collateral));
+    const usdtBefore = await usdt.balanceOf(A.borrower);
+    await tx(
+      lending
+        .connect(borrower)
+        .fillOffer(1, us(600), collateral, (await now()) + 300),
+    );
+    assert.equal(await usdt.balanceOf(A.borrower), usdtBefore + us(600));
+    await publish(70);
+    await tx(lending.connect(lender).settle(1));
+    const lenderBefore = await wbmb.balanceOf(A.lender);
+    const borrowerBefore = await wbmb.balanceOf(A.borrower);
+    await tx(lending.connect(lender).claimWBMB());
+    await tx(lending.connect(borrower).claimWBMB());
+    assert.equal(await wbmb.balanceOf(A.lender), lenderBefore + wb(9));
+    assert.equal(await wbmb.balanceOf(A.borrower), borrowerBefore + wb(1));
+    await tx(lending.connect(lender).closeOffer(1));
+    await tx(lending.connect(lender).claimUSDT());
+    const [u, w] = await lending.liabilities();
+    assert.equal(u, 0n);
+    assert.equal(w, 0n);
+    assert.equal(await usdt.balanceOf(lending.target), 0n);
+    assert.equal(await wbmb.balanceOf(lending.target), 0n);
   });
 });
