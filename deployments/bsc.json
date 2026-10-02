@@ -1,0 +1,28 @@
+{
+  "network": "bsc",
+  "chainId": 56,
+  "lending": "0xC290548995cA8Ca0Ede4bA0a3cAdfa79f489EF73",
+  "deployer": "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
+  "feeWallet": "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
+  "feeBps": 500,
+  "usdt": "0x55d398326f99059fF775485246999027B3197955",
+  "wbmb": "0x9E4c611B834672c3643D9818249366bf65ae4C86",
+  "pricePolicy": "0x0000000000000000000000000000000000000000",
+  "txHash": "0x95c3acf53b456cb74cdc25a6f98298c62f250c72285bc5df1c4299d111f770fc",
+  "blockNumber": 125196756,
+  "gasUsed": "2920336",
+  "deployedAt": "2026-10-02T00:30:34.010Z",
+  "compiler": {
+    "solc": "0.8.37",
+    "optimizerRuns": 200,
+    "viaIR": true,
+    "evmVersion": "cancun"
+  },
+  "constructorArgs": [
+    "0x55d398326f99059fF775485246999027B3197955",
+    "0x9E4c611B834672c3643D9818249366bf65ae4C86",
+    "0x0000000000000000000000000000000000000000",
+    "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
+    "500"
+  ]
+}
