@@ -1,5 +1,5 @@
 // Decides what the council price relay should publish. Pure: no network, no clock.
-import { parseUnits } from "ethers";
+import { formatUnits, parseUnits } from "ethers";
 
 export const COUNCIL_API_URL = "https://movnvote.com/api/public/price/latest";
 // Margin between the local decision and the block that carries it.
@@ -18,10 +18,16 @@ export function parseCouncilPrice(json) {
   return { price, confirmedAt: Math.floor(ms / 1000) };
 }
 
-export function planRelay({ api, chain, now, policyId }) {
-  const submit = (price, confirmedAt, reason) => ({
+/// `step` is the operator mode behind `--step`. Unattended runs leave it false and refuse
+/// whatever the contract could not accept. With it, a council price beyond the contract's
+/// per-report limit is approached one maximum step at a time, and an API confirmation time
+/// older than the chain's no longer blocks. Either way the report then carries the chain's
+/// `confirmedAt`: the operator, not the council, vouches for what is sent.
+export function planRelay({ api, chain, now, policyId, step = false }) {
+  const submit = (price, confirmedAt, reason, extra = {}) => ({
     action: "submit",
     reason,
+    ...extra,
     report: {
       policyId,
       roundId: chain.lastRoundId + 1,
@@ -37,20 +43,35 @@ export function planRelay({ api, chain, now, policyId }) {
   const changed = api.price !== chain.current;
   const expiring = chain.validUntil - now < Math.floor(chain.maxAge / 3);
   if (changed) {
-    if (api.confirmedAt < chain.confirmedAt)
+    const older = api.confirmedAt < chain.confirmedAt;
+    if (older && !step)
       throw new Error(
-        "카운슬 확정 시각이 체인에 올라간 값보다 과거입니다. 보내지 않았습니다.",
+        "카운슬 확정 시각이 체인에 올라간 값보다 과거입니다. 보내지 않았습니다. 사람이 값을 확인한 뒤 --step 으로 보낼 수 있습니다.",
       );
-    const diff =
-      api.price > chain.current
-        ? api.price - chain.current
-        : chain.current - api.price;
-    if (diff * 10000n > chain.current * BigInt(chain.maxChangeBps))
+    const up = api.price > chain.current;
+    const diff = up ? api.price - chain.current : chain.current - api.price;
+    const beyond = diff * 10000n > chain.current * BigInt(chain.maxChangeBps);
+    if (beyond && !step)
       throw new Error(
-        "가격 변동이 컨트랙트 한도를 넘습니다. 사람이 확인해야 합니다. 보내지 않았습니다.",
+        `가격 변동이 컨트랙트 한도를 넘습니다 (카운슬 ${formatUnits(api.price, 18)} · 체인 ${formatUnits(chain.current, 18)} · 한도 ${chain.maxChangeBps / 100}%). 사람이 확인해야 합니다. 보내지 않았습니다. 값이 맞으면 --step 으로 한도만큼씩 옮길 수 있습니다.`,
       );
-    if (now >= chain.changedAt + chain.minInterval)
-      return submit(api.price, api.confirmedAt, "가격 변경");
+    // Floored, so the step itself always satisfies the contract's `diff * BPS <= current * maxChangeBps`.
+    const most = (chain.current * BigInt(chain.maxChangeBps)) / 10000n;
+    const plan = beyond
+      ? submit(
+          up ? chain.current + most : chain.current - most,
+          chain.confirmedAt,
+          "한도만큼 단계 이동",
+          { step: true },
+        )
+      : older
+        ? submit(
+            api.price,
+            chain.confirmedAt,
+            "가격 변경 (확정 시각은 체인 값 유지)",
+          )
+        : submit(api.price, api.confirmedAt, "가격 변경");
+    if (now >= chain.changedAt + chain.minInterval) return plan;
     if (!expiring)
       return {
         action: "wait",

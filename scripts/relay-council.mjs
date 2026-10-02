@@ -4,6 +4,11 @@
 //   Dry run (sends nothing):   RELAY_KEY_FILE=/path/key npm run relay:council
 //   Real submission:           RELAY_KEY_FILE=/path/key npm run relay:council -- --broadcast
 //   Test market:               add --test-market
+//   Operator only:             add --step (never on the timer; see docs/MAINNET.md 8.3)
+//
+// --step is for the case the timer refuses: the council price is further from the on-chain
+// price than the contract accepts in one report. Each run then moves the on-chain price one
+// maximum step toward it. The price sent is not a council price; the operator vouches for it.
 //
 // For a mnemonic, RELAY_INDEX picks the wallet and RELAY_EXPECT must be that wallet's address.
 // The key is read at run time, never printed, never written anywhere.
@@ -39,6 +44,7 @@ export async function relayCouncil({
   index = 0,
   expectAddress,
   broadcast = false,
+  step = false,
   apiTimeoutMs = API_TIMEOUT_MS,
   confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
   fetchImpl = fetch,
@@ -116,6 +122,7 @@ export async function relayCouncil({
     const plan = planRelay({
       api,
       policyId,
+      step,
       now: block.timestamp,
       chain: {
         lastRoundId: Number(lastRoundId),
@@ -133,12 +140,22 @@ export async function relayCouncil({
     );
     if (plan.action !== "submit")
       return { action: plan.action, reason: plan.reason, broadcast: false };
+    const stepped = plan.step === true;
     log(
       `보고서   round ${plan.report.roundId} · 가격 ${formatUnits(plan.report.price, 18)} · 유효 ${new Date(plan.report.validUntil * 1000).toISOString()}`,
     );
+    if (stepped)
+      log(
+        `단계 이동 한도 ${Number(maxChangeBps) / 100}% 만큼만 옮깁니다. 이 가격은 카운슬 확정 가격이 아닙니다. 운영자가 보증하는 중간 값입니다.`,
+      );
     if (!broadcast) {
       log("--broadcast 가 없어 전송하지 않았습니다.");
-      return { action: "submit", reason: plan.reason, broadcast: false };
+      return {
+        action: "submit",
+        reason: plan.reason,
+        broadcast: false,
+        step: stepped,
+      };
     }
     const tx = await submitCouncilReport(oracle, plan.report, [signer]);
     log(`전송됨   ${tx.hash}`);
@@ -157,6 +174,7 @@ export async function relayCouncil({
       action: "submit",
       reason: plan.reason,
       broadcast: true,
+      step: stepped,
       txHash: tx.hash,
     };
   } finally {
@@ -181,6 +199,7 @@ if (process.argv[1]?.endsWith("relay-council.mjs")) {
         index: Number(process.env.RELAY_INDEX || 0),
         expectAddress: process.env.RELAY_EXPECT,
         broadcast: process.argv.includes("--broadcast"),
+        step: process.argv.includes("--step"),
       });
     })
     .catch((e) => {

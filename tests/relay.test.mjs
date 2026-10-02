@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { network } from "hardhat";
 import { JsonRpcProvider, Wallet } from "ethers";
 import { deployContract, us } from "../scripts/deploy.mjs";
-import { COUNCIL_POLICY_ID } from "../src/council-signing.mjs";
+import { BSC } from "../config/bsc.mjs";
+import {
+  COUNCIL_POLICY_ID,
+  submitCouncilReport,
+} from "../src/council-signing.mjs";
 import { parseCouncilPrice, planRelay } from "../src/council-relay.mjs";
 import { relayCouncil } from "../scripts/relay-council.mjs";
 
@@ -103,6 +107,104 @@ describe("planRelay", () => {
   it("refuses a confirmation time in the future or older than the chain's", () => {
     assert.throws(() => plan(api("112.3", now + 10), chain()), /확정 시각/);
     assert.throws(() => plan(api("118", CONFIRMED - 10), chain()), /확정 시각/);
+  });
+  it("an over-limit refusal names the council price, the chain price, the limit and --step", () => {
+    assert.throws(
+      () => plan(api("146"), chain()),
+      (e) =>
+        /카운슬 146\.0/.test(e.message) &&
+        /체인 112\.3/.test(e.message) &&
+        /한도 30%/.test(e.message) &&
+        /--step/.test(e.message) &&
+        /보내지 않았습니다/.test(e.message),
+    );
+  });
+
+  // Operator mode: `step` is only ever set by a person running --step.
+  const stepPlan = (a, c) =>
+    planRelay({
+      api: a,
+      chain: c,
+      now,
+      policyId: COUNCIL_POLICY_ID,
+      step: true,
+    });
+  it("step: moves one maximum step up and carries the chain's confirmedAt", () => {
+    const p = stepPlan(api("200", CONFIRMED + 60), chain());
+    assert.equal(p.action, "submit");
+    assert.equal(p.step, true);
+    // 112.3 + floor(112.3 * 30%) = 145.99
+    assert.deepEqual(p.report, {
+      policyId: COUNCIL_POLICY_ID,
+      roundId: 4,
+      price: us("145.99"),
+      confirmedAt: CONFIRMED,
+      validUntil: now + MAX_AGE - 600,
+    });
+  });
+  it("step: moves one maximum step down", () => {
+    const p = stepPlan(api("50", CONFIRMED + 60), chain());
+    assert.equal(p.action, "submit");
+    assert.equal(p.step, true);
+    // 112.3 - floor(112.3 * 30%) = 78.61
+    assert.equal(p.report.price, us("78.61"));
+    assert.equal(p.report.confirmedAt, CONFIRMED);
+  });
+  it("step: the step is floored, so it never exceeds what the contract accepts", () => {
+    const current = 1000000000000000003n;
+    for (const target of [current * 5n, 1n]) {
+      const p = stepPlan(
+        { price: target, confirmedAt: CONFIRMED },
+        chain({ current, maxChangeBps: 3333 }),
+      );
+      const diff =
+        p.report.price > current
+          ? p.report.price - current
+          : current - p.report.price;
+      assert.equal(diff, (current * 3333n) / 10000n);
+      // The contract's own test: diff * BPS <= current * maxChangeBps, and one unit more fails it.
+      assert.ok(diff * 10000n <= current * 3333n);
+      assert.ok((diff + 1n) * 10000n > current * 3333n);
+    }
+  });
+  it("step: waits when the last change is too recent, but still refreshes an expiring price", () => {
+    const soon = { changedAt: now - 60 };
+    const waiting = stepPlan(api("200"), chain(soon));
+    assert.equal(waiting.action, "wait");
+    assert.equal(waiting.report, undefined);
+    const p = stepPlan(api("200"), chain({ ...soon, validUntil: now + 3600 }));
+    assert.equal(p.action, "submit");
+    assert.equal(p.step, undefined);
+    assert.equal(p.report.price, us("112.3"));
+    assert.equal(p.report.confirmedAt, CONFIRMED);
+  });
+  it("step: an API confirmedAt older than the chain's no longer blocks", () => {
+    // Within the limit: the council price itself, under the chain's confirmedAt.
+    const within = stepPlan(api("118", CONFIRMED - 10), chain());
+    assert.equal(within.action, "submit");
+    assert.equal(within.report.price, us("118"));
+    assert.equal(within.report.confirmedAt, CONFIRMED);
+    // Beyond the limit: one step, also under the chain's confirmedAt.
+    const beyond = stepPlan(api("200", CONFIRMED - 10), chain());
+    assert.equal(beyond.report.price, us("145.99"));
+    assert.equal(beyond.report.confirmedAt, CONFIRMED);
+  });
+  it("step: changes nothing when the council price is within the limit", () => {
+    for (const [a, c] of [
+      [api(), chain()],
+      [api(), chain({ validUntil: now + MAX_AGE / 3 - 1 })],
+      [api("118", CONFIRMED + 60), chain()],
+      [api("145.99", CONFIRMED + 60), chain()],
+      [api("118"), chain({ changedAt: now - 60 })],
+      [
+        api(),
+        chain({ lastRoundId: 0, current: 0n, confirmedAt: 0, validUntil: 0 }),
+      ],
+    ])
+      assert.deepEqual(stepPlan(a, c), plan(a, c));
+  });
+  it("step: still refuses a confirmation time in the future", () => {
+    assert.throws(() => stepPlan(api("200", now + 10), chain()), /확정 시각/);
   });
 });
 
@@ -247,5 +349,206 @@ describe("relayCouncil against a local chain", () => {
     await run({ log: (l) => lines.push(String(l)) });
     assert.ok(lines.length > 0);
     assert.ok(!lines.join("\n").includes(reporter.privateKey.slice(2)));
+  });
+});
+
+// The limits the real market is deployed with (config/bsc.mjs): 30% per change, 12 hours apart.
+describe("relayCouncil with the deployed limits, on a local chain", () => {
+  const url = "http://127.0.0.1:18564";
+  const { maxAge, maxChangeBps, minInterval } = BSC.council;
+  const T0 = "2026-01-01T00:00:00.000Z";
+  const T1 = "2026-02-01T00:00:00.000Z";
+  const T2 = "2026-03-01T00:00:00.000Z";
+  const secs = (iso) => Math.floor(Date.parse(iso) / 1000);
+  let server, local, oracle;
+  const reporter = Wallet.createRandom();
+  const run = (price, confirmedAt, over = {}) =>
+    relayCouncil({
+      rpcUrl: url,
+      chainId: 31337,
+      policy: oracle.target,
+      secret: reporter.privateKey,
+      broadcast: true,
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ price, date: "test", confirmedAt }),
+      }),
+      log: () => {},
+      ...over,
+    });
+  const state = async () => ({
+    round: await oracle.lastRoundId(),
+    previous: await oracle.previous(),
+    current: await oracle.current(),
+    confirmedAt: await oracle.confirmedAt(),
+    validUntil: await oracle.validUntil(),
+    changedAt: await oracle.changedAt(),
+  });
+  const sent = () => local.getTransactionCount(reporter.address);
+  const advance = async (seconds) => {
+    await local.send("evm_increaseTime", [seconds]);
+    await local.send("evm_mine", []);
+  };
+
+  before(async () => {
+    server = await network.createServer(undefined, "127.0.0.1", 18564);
+    await server.listen();
+    local = new JsonRpcProvider(url, 31337, {
+      staticNetwork: true,
+      cacheTimeout: -1,
+    });
+    oracle = await deployContract(
+      "CouncilPricePolicy",
+      await local.getSigner(0),
+      [
+        [reporter.address],
+        1,
+        COUNCIL_POLICY_ID,
+        maxAge,
+        maxChangeBps,
+        minInterval,
+      ],
+    );
+    await local.send("hardhat_setBalance", [
+      reporter.address,
+      "0x16345785D8A0000",
+    ]);
+  });
+  after(async () => {
+    local?.destroy();
+    await server?.close();
+  });
+
+  it("the policy under test carries the deployed limits", async () => {
+    assert.deepEqual(
+      [maxAge, maxChangeBps, minInterval],
+      [6 * 86400, 3000, 43200],
+    );
+    assert.equal(await oracle.maxChangeBps(), 3000n);
+    assert.equal(await oracle.minInterval(), 43200n);
+  });
+  it("a changed price waits for minInterval, then the contract accepts it", async () => {
+    await run(100, T0);
+    assert.equal((await state()).current, us(100));
+    const before = await sent();
+    const early = await run(110, T1);
+    assert.equal(early.action, "wait");
+    assert.equal(await sent(), before);
+    assert.equal((await state()).current, us(100));
+    await advance(minInterval);
+    const r = await run(110, T1);
+    assert.equal(r.broadcast, true);
+    const s = await state();
+    assert.equal(s.round, 2n);
+    assert.equal(s.current, us(110));
+    assert.equal(s.previous, us(100));
+    assert.equal(s.confirmedAt, BigInt(secs(T1)));
+    assert.equal(
+      s.changedAt,
+      BigInt((await local.getBlock("latest")).timestamp),
+    );
+  });
+  it("a same-price refresh extends validUntil and does not reset changedAt", async () => {
+    const before = await state();
+    assert.equal((await run(110, T1)).action, "none");
+    assert.equal(await oracle.lastRoundId(), 2n);
+    // Less than a third of maxAge left, but not expired.
+    await advance((2 * maxAge) / 3);
+    const r = await run(110, T1);
+    assert.equal(r.action, "submit");
+    assert.equal(r.broadcast, true);
+    const s = await state();
+    assert.equal(s.round, 3n);
+    assert.ok(s.validUntil > before.validUntil);
+    // now + maxAge - 600, where `now` is the block the relay read just before its own.
+    const mined = (await local.getBlock("latest")).timestamp;
+    assert.ok(s.validUntil < BigInt(mined + maxAge - 600));
+    assert.ok(s.validUntil > BigInt(mined + maxAge - 660));
+    assert.equal(s.changedAt, before.changedAt);
+    assert.equal(s.current, before.current);
+    assert.equal(s.previous, before.previous);
+    assert.equal(s.confirmedAt, before.confirmedAt);
+  });
+  it("an over-limit council price is refused and nothing is sent", async () => {
+    const before = await state();
+    const nonce = await sent();
+    // 110 -> 180 is +63.6%, beyond the 30% the contract can ever accept in one report.
+    await assert.rejects(
+      run(180, T2),
+      (e) =>
+        /한도/.test(e.message) &&
+        /카운슬 180\.0/.test(e.message) &&
+        /체인 110\.0/.test(e.message) &&
+        /--step/.test(e.message),
+    );
+    assert.equal(await sent(), nonce);
+    assert.deepEqual(await state(), before);
+  });
+  it("a --step dry run prints the planned step and sends nothing", async () => {
+    const before = await state();
+    const nonce = await sent();
+    const lines = [];
+    const r = await run(180, T2, {
+      step: true,
+      broadcast: false,
+      log: (l) => lines.push(String(l)),
+    });
+    assert.deepEqual(
+      { action: r.action, broadcast: r.broadcast, step: r.step },
+      { action: "submit", broadcast: false, step: true },
+    );
+    const text = lines.join("\n");
+    assert.match(text, /카운슬 180\.0 · 체인 110\.0/);
+    assert.match(text, /가격 143\.0/);
+    assert.match(text, /카운슬 확정 가격이 아닙니다/);
+    assert.equal(await sent(), nonce);
+    assert.deepEqual(await state(), before);
+  });
+  it("one --step lands exactly on the limit and the contract accepts it", async () => {
+    const before = await state();
+    const limit =
+      before.current + (before.current * BigInt(maxChangeBps)) / 10000n;
+    assert.equal(limit, us(143));
+    // One unit beyond the limit is what the contract refuses.
+    const t = (await local.getBlock("latest")).timestamp;
+    await assert.rejects(
+      submitCouncilReport(
+        oracle.connect(reporter.connect(local)),
+        {
+          policyId: COUNCIL_POLICY_ID,
+          roundId: Number(before.round) + 1,
+          price: limit + 1n,
+          confirmedAt: Number(before.confirmedAt),
+          validUntil: t + 3600,
+        },
+        [reporter],
+      ),
+      /PRICE_JUMP/,
+    );
+    const r = await run(180, T2, { step: true });
+    assert.equal(r.broadcast, true);
+    assert.equal(r.step, true);
+    const s = await state();
+    assert.equal(s.round, before.round + 1n);
+    assert.equal(s.current, limit);
+    assert.equal(s.previous, us(110));
+    // The intermediate price is not a council confirmation: the chain's time is kept.
+    assert.equal(s.confirmedAt, BigInt(secs(T1)));
+  });
+  it("after minInterval the next ordinary run reaches the council price", async () => {
+    const nonce = await sent();
+    assert.equal((await run(180, T2)).action, "wait");
+    assert.equal((await run(180, T2, { step: true })).action, "wait");
+    assert.equal(await sent(), nonce);
+    await advance(minInterval);
+    // 143 -> 180 is +25.9%: within the limit, so no --step is needed.
+    const r = await run(180, T2);
+    assert.equal(r.broadcast, true);
+    assert.equal(r.step, false);
+    const s = await state();
+    assert.equal(s.current, us(180));
+    assert.equal(s.previous, us(143));
+    assert.equal(s.confirmedAt, BigInt(secs(T2)));
+    assert.equal((await run(180, T2)).action, "none");
   });
 });
