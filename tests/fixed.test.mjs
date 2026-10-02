@@ -105,6 +105,8 @@ describe("oracle-free fixed-ratio market", () => {
       500,
       3600,
       86400,
+      0,
+      0,
     ]);
     for (const s of [borrower, lender, lender2]) {
       await tx(usdt.mint(await addr(s), us(10000)));
@@ -133,6 +135,8 @@ describe("oracle-free fixed-ratio market", () => {
         500,
         3600,
         86400,
+        0,
+        0,
       ]),
       /BAD_CONFIG/,
     );
@@ -146,6 +150,8 @@ describe("oracle-free fixed-ratio market", () => {
         500,
         3600,
         86400,
+        0,
+        0,
       ]),
       /BAD_CONFIG/,
     );
@@ -317,6 +323,8 @@ describe("oracle-free fixed-ratio market", () => {
       fee,
       3600,
       86400,
+      0,
+      0,
     ];
     await assert.rejects(
       deployContract("P2PLending", admin, args(1001)),
@@ -388,24 +396,22 @@ describe("oracle-free fixed-ratio market", () => {
       500,
       300,
       300,
+      0,
+      0,
     ]);
     await tx(wbmb.connect(borrower).approve(quick.target, wb(1)));
     await assert.rejects(
-      quick
-        .connect(borrower)
-        .createOffer(0, us(90), wb(1), us(10), expiry, {
-          ...short,
-          duration: 299,
-        }),
+      quick.connect(borrower).createOffer(0, us(90), wb(1), us(10), expiry, {
+        ...short,
+        duration: 299,
+      }),
       /BAD_TERM/,
     );
     await assert.rejects(
-      quick
-        .connect(borrower)
-        .createOffer(0, us(90), wb(1), us(10), expiry, {
-          ...short,
-          grace: 299,
-        }),
+      quick.connect(borrower).createOffer(0, us(90), wb(1), us(10), expiry, {
+        ...short,
+        grace: 299,
+      }),
       /ORACLE_FREE_TERMS/,
     );
     await tx(
@@ -432,6 +438,8 @@ describe("oracle-free fixed-ratio market", () => {
         500,
         d,
         g,
+        0,
+        0,
       ]);
     await assert.rejects(bad(59, 300), /BAD_LIMITS/);
     await assert.rejects(bad(300, 59), /BAD_LIMITS/);

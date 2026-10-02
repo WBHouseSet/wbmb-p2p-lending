@@ -144,6 +144,8 @@ export async function deployBsc({
       BSC.feeBps,
       limits.minDuration,
       limits.minGrace,
+      0,
+      0,
     ];
     const a = artifact("P2PLending");
     const factory = new ContractFactory(

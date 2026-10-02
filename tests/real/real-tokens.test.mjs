@@ -117,6 +117,8 @@ describe("real BSC USDT and WBMB bytecode", () => {
       BSC.feeBps,
       3600,
       86400,
+      0,
+      0,
     ]);
     gas.deploy = (await lending.deploymentTransaction().wait()).gasUsed;
   });

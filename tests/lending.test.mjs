@@ -292,11 +292,11 @@ describe("P2P lending on a real local EVM", () => {
   });
   it("maturity-only mode ignores price drops and transfers ALL collateral only after grace", async () => {
     const id = await fill(
-      await borrowOffer({ terms: { mode: 1, duration: 3600, grace: 600 } }),
+      await borrowOffer({ terms: { mode: 1, duration: 3600, grace: 86400 } }),
     );
     await refresh(1, 1);
     await assert.rejects(f.lending.settle(id), /NOT_OVERDUE/);
-    await advance(7201);
+    await advance(7201 + 86400);
     await tx(f.lending.settle(id)); // no oracle needed even though stale
     assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(1));
     assert.equal(await f.lending.claimableWBMB(f.addresses[1]), 0n);
@@ -304,9 +304,9 @@ describe("P2P lending on a real local EVM", () => {
   });
   it("price mode can settle a healthy overdue loan with surplus returned", async () => {
     const id = await fill(
-      await borrowOffer({ terms: { duration: 3600, grace: 600 } }),
+      await borrowOffer({ terms: { duration: 3600, grace: 86400 } }),
     );
-    await advance(4300);
+    await advance(4300 + 86400);
     await refresh(100, 100);
     await tx(f.lending.settle(id));
     assert((await f.lending.claimableWBMB(f.addresses[1])) > 0n);
@@ -394,6 +394,8 @@ describe("P2P lending on a real local EVM", () => {
         500,
         3600,
         86400,
+        0,
+        7 * 86400,
       ]),
       /DECIMALS/,
     );
@@ -428,6 +430,8 @@ describe("P2P lending on a real local EVM", () => {
       500,
       3600,
       86400,
+      0,
+      7 * 86400,
     ]);
     await tx(token.mint(f.addresses[2], us(1000)));
     await tx(token.connect(f.lender).approve(lending.target, us(1000)));

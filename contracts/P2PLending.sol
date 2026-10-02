@@ -67,6 +67,10 @@ contract P2PLending is ReentrancyGuard {
     /// Shortest loan and (oracle-free) shortest grace this deployment accepts, in seconds.
     uint256 public immutable minDuration;
     uint256 public immutable minGrace;
+    /// Extra share of the debt a lender receives in WBMB when a priced loan is settled.
+    uint256 public immutable liquidationBonusBps;
+    /// How long past maturity + grace a priced loan waits for a price before the lender takes all.
+    uint256 public immutable staleSettleDelay;
     uint256 public offerCount;
     uint256 public loanCount;
     mapping(uint256 => Offer) private offers;
@@ -93,14 +97,18 @@ contract P2PLending is ReentrancyGuard {
     event FeesFlushed(uint256 amount);
 
     constructor(
-        address usdt_, address wbmb_, address policy_, address vault_, uint256 feeBps_, uint256 minDuration_, uint256 minGrace_
+        address usdt_, address wbmb_, address policy_, address vault_, uint256 feeBps_, uint256 minDuration_, uint256 minGrace_,
+        uint256 bonusBps_, uint256 staleDelay_
     ) {
         require(usdt_ != wbmb_ && vault_ != address(0) && (policy_ == address(0) || policy_.code.length > 0), "BAD_CONFIG");
         require(IERC20Metadata(usdt_).decimals() == 18 && IERC20Metadata(wbmb_).decimals() == 8, "DECIMALS");
         require(feeBps_ <= 1000, "FEE_TOO_HIGH");
         usdt = IERC20(usdt_); wbmb = IERC20(wbmb_); pricePolicy = IPricePolicy(policy_);
         require(minDuration_ >= 1 minutes && minDuration_ <= 30 days && minGrace_ >= 1 minutes && minGrace_ <= 7 days, "BAD_LIMITS");
+        // The stale delay only matters with a price policy; there it must leave time to restart a relay.
+        require(bonusBps_ <= 1000 && staleDelay_ <= 30 days && (policy_ == address(0) || staleDelay_ >= 1 minutes), "BAD_LIMITS");
         feeVault = vault_; feeBps = feeBps_; minDuration = minDuration_; minGrace = minGrace_;
+        liquidationBonusBps = bonusBps_; staleSettleDelay = staleDelay_;
     }
 
     function oracleFree() public view returns (bool) { return address(pricePolicy) == address(0); }
@@ -118,7 +126,11 @@ contract P2PLending is ReentrancyGuard {
         bool fixedRatio = oracleFree();
         // Without price liquidation a late borrower loses everything, so a minimum grace is mandatory.
         if (fixedRatio) require(t.mode == Mode.MaturityOnlyAllCollateral && t.haircutBps == 0 && t.liquidationBps == 0 && t.grace >= minGrace, "ORACLE_FREE_TERMS");
-        else require(t.haircutBps >= 100 && t.haircutBps <= 9000 && t.liquidationBps < BPS && BPS - t.haircutBps < t.liquidationBps, "BAD_MARGIN");
+        else {
+            require(t.haircutBps >= 100 && t.haircutBps <= 9000 && t.liquidationBps < BPS && BPS - t.haircutBps < t.liquidationBps, "BAD_MARGIN");
+            // Settlement costs the borrower the bonus, so a late payment needs the same minimum grace.
+            require(t.grace >= minGrace, "BAD_GRACE");
+        }
         // Borrow: collateral is escrowed now. Oracle-free Lend: collateral is what borrowers must post for the full offer.
         if (side == Side.Borrow || fixedRatio) require(collateral > 0 && collateral <= MAX_AMOUNT, "BAD_COLLATERAL");
         else require(collateral == 0, "LEND_NO_COLLATERAL");
@@ -260,11 +272,16 @@ contract P2PLending is ReentrancyGuard {
             // Explicit distinct product: EVERY remaining collateral unit, including top-ups.
             return (l.collateral, 0, debt, 0);
         }
-        (, price) = pricePolicy.prices();
-        require(price > 0 && price <= 1e30, "BAD_PRICE");
+        bool ok;
+        try pricePolicy.prices() returns (uint256, uint256 p) { price = p; ok = p > 0 && p <= 1e30; } catch {}
+        if (!ok) {
+            // A dead price relay must not lock an overdue loan forever.
+            require(block.timestamp >= uint256(l.maturity) + l.terms.grace + staleSettleDelay, "STALE_PRICE");
+            return (l.collateral, 0, debt, 0);
+        }
         uint256 threshold = Math.mulDiv(Math.mulDiv(l.collateral, price, WBMB_UNIT), l.terms.liquidationBps, BPS);
         require(overdue || debt >= threshold, "HEALTHY");
-        toLender = Math.min(l.collateral, Math.mulDiv(debt, WBMB_UNIT, price, Math.Rounding.Ceil));
+        toLender = Math.min(l.collateral, Math.mulDiv(debt * (BPS + liquidationBonusBps), WBMB_UNIT, price * BPS, Math.Rounding.Ceil));
         toBorrower = l.collateral - toLender;
     }
 

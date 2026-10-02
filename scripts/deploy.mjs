@@ -7,6 +7,10 @@ import {
   hashSyntheticData,
   submitReport,
 } from "../src/report-signing.mjs";
+import {
+  COUNCIL_POLICY_ID,
+  submitCouncilReport,
+} from "../src/council-signing.mjs";
 
 export const us = (x) => parseUnits(String(x), 18);
 export const wb = (x) => parseUnits(String(x), 8);
@@ -116,6 +120,8 @@ export async function deployFixture(provider, { seed = false } = {}) {
     500,
     3600,
     86400,
+    0,
+    7 * 86400,
   ]);
   for (const address of addresses) {
     await (await usdt.mint(address, us(10000))).wait();
@@ -205,6 +211,8 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
     500,
     3600,
     86400,
+    0,
+    0,
   ]);
   for (const address of addresses) {
     await (await usdt.mint(address, us(10000))).wait();
@@ -227,6 +235,116 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
     ).wait();
   }
   return { provider, accounts, addresses, usdt, wbmb, lending, feeWallet };
+}
+export const COUNCIL_TERMS = {
+  aprBps: 1200,
+  haircutBps: 4000,
+  liquidationBps: 8000,
+  duration: 30 * 86400,
+  grace: 86400,
+  mode: 0,
+};
+export const COUNCIL_REPORTER_INDEX = 4;
+export const COUNCIL_MAX_AGE = 6 * 86400;
+/// Council-price market with mock tokens. The local policy has no change interval and a wide
+/// change limit so the lab can move the price freely; the limits themselves are tested in
+/// tests/council.test.mjs.
+export async function deployCouncilFixture(provider, { seed = false } = {}) {
+  await assertLocal(provider);
+  const accounts = await Promise.all(
+    [0, 1, 2, 3].map((i) => provider.getSigner(i)),
+  );
+  const [admin, borrower, lender, lender2] = accounts;
+  const addresses = await Promise.all(accounts.map((a) => a.getAddress()));
+  const usdt = await deployContract("MockToken", admin, [
+    "Demo USDT",
+    "dUSDT",
+    18,
+  ]);
+  const wbmb = await deployContract("MockToken", admin, [
+    "Demo WBMB",
+    "dWBMB",
+    8,
+  ]);
+  const reporter = await provider.getSigner(COUNCIL_REPORTER_INDEX);
+  const reporterAddress = await reporter.getAddress();
+  const oracle = await deployContract("CouncilPricePolicy", admin, [
+    [reporterAddress],
+    1,
+    COUNCIL_POLICY_ID,
+    COUNCIL_MAX_AGE,
+    9000,
+    0,
+  ]);
+  const publishPrice = async (price) => {
+    const t = Number((await provider.getBlock("latest")).timestamp);
+    const report = {
+      policyId: COUNCIL_POLICY_ID,
+      roundId: Number(await oracle.lastRoundId()) + 1,
+      price,
+      confirmedAt: t,
+      validUntil: t + COUNCIL_MAX_AGE - 60,
+    };
+    return (
+      await submitCouncilReport(oracle.connect(reporter), report, [reporter])
+    ).wait();
+  };
+  await publishPrice(us(100));
+  const feeWallet = addresses[0];
+  const lending = await deployContract("P2PLending", admin, [
+    usdt.target,
+    wbmb.target,
+    oracle.target,
+    feeWallet,
+    500,
+    3600,
+    86400,
+    500,
+    7 * 86400,
+  ]);
+  for (const address of addresses) {
+    await (await usdt.mint(address, us(10000))).wait();
+    await (await wbmb.mint(address, wb(100))).wait();
+  }
+  if (seed) {
+    const block = await provider.getBlock("latest");
+    // 30 days, not 7: the browser lab jumps a week forward and the seeded offers must survive it.
+    const expires = block.timestamp + 30 * 86400;
+    await (await wbmb.connect(borrower).approve(lending.target, wb(10))).wait();
+    await (
+      await lending
+        .connect(borrower)
+        .createOffer(0, us(600), wb(10), us(10), expires, COUNCIL_TERMS)
+    ).wait();
+    await (await usdt.connect(lender).approve(lending.target, us(1000))).wait();
+    await (
+      await lending
+        .connect(lender)
+        .createOffer(1, us(1000), 0, us(10), expires, {
+          ...COUNCIL_TERMS,
+          aprBps: 1000,
+          duration: 14 * 86400,
+        })
+    ).wait();
+  }
+  return {
+    provider,
+    accounts,
+    addresses,
+    admin,
+    borrower,
+    lender,
+    lender2,
+    usdt,
+    wbmb,
+    oracle,
+    lending,
+    feeWallet,
+    terms: COUNCIL_TERMS,
+    reporter,
+    reporterAddress,
+    publishPrice,
+  };
 }
 export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
   if (!f.oracle) {
