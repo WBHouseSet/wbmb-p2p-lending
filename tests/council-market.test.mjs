@@ -229,6 +229,15 @@ describe("council-price market", () => {
       assert.deepEqual([q.toLender, q.toBorrower, q.price], [wb(10), 0n, 0n]);
       await f.provider.send("evm_revert", [snapshot]);
     }
+    // A last-price read that reverts is treated the same way.
+    await tx(policy.set(0, expiry, us(90)));
+    await tx(policy.setBroken(true));
+    const snapshot = await f.provider.send("evm_snapshot", []);
+    await advance(2 * DAY + 7 * DAY + 120);
+    const broken = await lending.quoteSettlement(1);
+    assert.deepEqual([broken.toLender, broken.price], [wb(10), 0n]);
+    await f.provider.send("evm_revert", [snapshot]);
+    await tx(policy.setBroken(false));
     // The same loan with a usable last price settles at it.
     await tx(policy.set(0, expiry, us(90)));
     await advance(2 * DAY + 7 * DAY + 120);
