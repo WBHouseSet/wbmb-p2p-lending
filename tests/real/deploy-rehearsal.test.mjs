@@ -17,6 +17,8 @@ import {
 import { BSC } from "../../config/bsc.mjs";
 import {
   deployBsc,
+  liveAbiNames,
+  livePinned,
   liveWebConfig,
   loadDeployer,
 } from "../../scripts/deploy-bsc.mjs";
@@ -133,6 +135,15 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       },
       { demo: false, oracleFree: true, chainId: 56, lending: record.lending },
     );
+    // The pin compiled into the bundle carries no price contract for this market.
+    assert.deepEqual(Object.keys(livePinned(record)), [
+      "chainId",
+      "lending",
+      "usdt",
+      "wbmb",
+      "feeWallet",
+    ]);
+    assert.deepEqual(liveAbiNames(record), ["P2PLending"]);
   });
 
   it("refuses to overwrite an existing deployment record", async () => {
@@ -367,6 +378,12 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(web.oracleFree, undefined);
     assert.equal(web.addresses.oracle, record.pricePolicy);
     assert.equal(web.liquidationBonusBps, 500);
+    // The pin of a council record names the price contract.
+    assert.equal(livePinned(record).oracle, record.pricePolicy);
+    assert.deepEqual(liveAbiNames(record), [
+      "P2PLending",
+      "CouncilPricePolicy",
+    ]);
     // The oracle-free record written earlier in this file is untouched.
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(outDir, "bsc.json"), "utf8"))

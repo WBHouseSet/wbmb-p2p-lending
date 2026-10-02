@@ -999,8 +999,12 @@ async function init() {
   // deployment.json cannot redirect approvals to another contract.
   const liveOk =
     config.demo === false &&
-    (fixed() ||
-      (council() && sameAddress(config.addresses?.oracle, PINNED?.oracle))) &&
+    // The build decides the market type; the fetched file cannot change it.
+    (PINNED?.oracle
+      ? council() &&
+        !fixed() &&
+        sameAddress(config.addresses?.oracle, PINNED.oracle)
+      : fixed() && !council()) &&
     PINNED !== null &&
     typeof config.chainId === "number" &&
     Object.hasOwn(LIVE_CHAINS, config.chainId) &&

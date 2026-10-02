@@ -14,7 +14,12 @@ import {
 } from "ethers";
 import { createServer } from "vite";
 import { compile } from "./compile.mjs";
-import { deployBsc, liveWebConfig } from "./deploy-bsc.mjs";
+import {
+  deployBsc,
+  liveAbiNames,
+  livePinned,
+  liveWebConfig,
+} from "./deploy-bsc.mjs";
 import { relayCouncil } from "./relay-council.mjs";
 import { us, wb } from "./deploy.mjs";
 import { BSC } from "../config/bsc.mjs";
@@ -110,10 +115,11 @@ try {
   const abis = JSON.parse(fs.readFileSync("public/abis.json", "utf8"));
   fs.writeFileSync(
     path.join(publicDir, "abis.json"),
-    JSON.stringify({
-      P2PLending: abis.P2PLending,
-      ...(councilMarket ? { CouncilPricePolicy: abis.CouncilPricePolicy } : {}),
-    }) + "\n",
+    JSON.stringify(
+      Object.fromEntries(
+        liveAbiNames(record).map((name) => [name, abis[name]]),
+      ),
+    ) + "\n",
   );
   fs.writeFileSync(
     path.join(publicDir, "deployment.json"),
@@ -122,14 +128,7 @@ try {
   web = await createServer({
     publicDir,
     define: {
-      __PINNED__: JSON.stringify({
-        chainId: record.chainId,
-        lending: record.lending,
-        usdt: record.usdt,
-        wbmb: record.wbmb,
-        feeWallet: record.feeWallet,
-        ...(councilMarket ? { oracle: record.pricePolicy } : {}),
-      }),
+      __PINNED__: JSON.stringify(livePinned(record)),
     },
     server: { host: "127.0.0.1", port: appPort, strictPort: true },
   });

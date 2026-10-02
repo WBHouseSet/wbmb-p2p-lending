@@ -3,17 +3,16 @@
 import fs from "node:fs";
 import { build } from "vite";
 import { compile } from "./compile.mjs";
-import { liveWebConfig } from "./deploy-bsc.mjs";
+import { liveAbiNames, livePinned, liveWebConfig } from "./deploy-bsc.mjs";
 
 const recordFile = process.env.RECORD || "deployments/bsc.json";
 if (!fs.existsSync(recordFile))
   throw new Error(
-    `${recordFile} 이 없습니다. 먼저 npm run deploy:bsc -- --broadcast 로 배포하세요.`,
+    `${recordFile} 이 없습니다. 해당 마켓을 먼저 배포해야 합니다 (배포 방법은 docs/MAINNET.md 참고).`,
   );
 compile();
 const record = JSON.parse(fs.readFileSync(recordFile, "utf8"));
 const outDir = process.env.OUT_DIR || "dist-live";
-const council = record.pricePolicy && BigInt(record.pricePolicy) !== 0n;
 const publicDir = ".local/web-live";
 fs.mkdirSync(publicDir, { recursive: true });
 // Only the lending ABI (and the price policy for a council market) is needed live;
@@ -21,10 +20,9 @@ fs.mkdirSync(publicDir, { recursive: true });
 const abis = JSON.parse(fs.readFileSync("public/abis.json", "utf8"));
 fs.writeFileSync(
   `${publicDir}/abis.json`,
-  JSON.stringify({
-    P2PLending: abis.P2PLending,
-    ...(council ? { CouncilPricePolicy: abis.CouncilPricePolicy } : {}),
-  }) + "\n",
+  JSON.stringify(
+    Object.fromEntries(liveAbiNames(record).map((name) => [name, abis[name]])),
+  ) + "\n",
 );
 fs.writeFileSync(
   `${publicDir}/deployment.json`,
@@ -32,17 +30,9 @@ fs.writeFileSync(
     "\n",
 );
 // Addresses are compiled into the bundle; the page refuses a deployment.json that differs.
-const pinned = {
-  chainId: record.chainId,
-  lending: record.lending,
-  usdt: record.usdt,
-  wbmb: record.wbmb,
-  feeWallet: record.feeWallet,
-  ...(council ? { oracle: record.pricePolicy } : {}),
-};
 await build({
   publicDir,
-  define: { __PINNED__: JSON.stringify(pinned) },
+  define: { __PINNED__: JSON.stringify(livePinned(record)) },
   build: { outDir, emptyOutDir: true },
 });
 console.log(

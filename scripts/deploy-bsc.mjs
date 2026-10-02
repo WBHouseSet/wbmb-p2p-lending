@@ -377,7 +377,7 @@ export async function deployBsc({
 
 /// Web config for a live deployment record (what the page fetches as /deployment.json).
 export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
-  const council = record.pricePolicy && record.pricePolicy !== ZeroAddress;
+  const council = isCouncilRecord(record);
   return {
     version: council ? 3 : 2,
     demo: false,
@@ -396,6 +396,29 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
       ...(council ? { oracle: record.pricePolicy } : {}),
     },
   };
+}
+
+const isCouncilRecord = (record) =>
+  Boolean(record.pricePolicy) && BigInt(record.pricePolicy) !== 0n;
+
+/// The addresses compiled into a live bundle as __PINNED__. The price contract is pinned
+/// only for a council record, so the build alone decides which market the page accepts.
+export function livePinned(record) {
+  return {
+    chainId: record.chainId,
+    lending: record.lending,
+    usdt: record.usdt,
+    wbmb: record.wbmb,
+    feeWallet: record.feeWallet,
+    ...(isCouncilRecord(record) ? { oracle: record.pricePolicy } : {}),
+  };
+}
+
+/// Names of the contract ABIs a live page needs (mock ABIs stay out of the bundle).
+export function liveAbiNames(record) {
+  return isCouncilRecord(record)
+    ? ["P2PLending", "CouncilPricePolicy"]
+    : ["P2PLending"];
 }
 
 if (process.argv[1]?.endsWith("deploy-bsc.mjs")) {

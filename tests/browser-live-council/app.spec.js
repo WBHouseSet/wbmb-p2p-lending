@@ -106,3 +106,35 @@ test("rejects a swapped oracle address", async ({ page }) => {
     "허용되지 않은 배포 설정입니다",
   );
 });
+
+// The build decides the market type: a council build refuses a fetched file that
+// claims the oracle-free market, whatever else the file says.
+for (const [name, edit] of [
+  [
+    "rejects a file downgraded to the oracle-free market",
+    (json) => {
+      json.oracleFree = true;
+      delete json.policy;
+    },
+  ],
+  [
+    "rejects a file that claims both market types",
+    (json) => {
+      json.oracleFree = true;
+      json.policy = "council";
+    },
+  ],
+]) {
+  test(name, async ({ page }) => {
+    await page.route("**/deployment.json", async (route) => {
+      const response = await route.fetch();
+      const json = await response.json();
+      edit(json);
+      await route.fulfill({ response, json });
+    });
+    await page.goto("/");
+    await expect(page.locator("#status")).toContainText(
+      "허용되지 않은 배포 설정입니다",
+    );
+  });
+}
