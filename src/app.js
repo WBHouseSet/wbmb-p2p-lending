@@ -472,7 +472,15 @@ async function connectByQr() {
     dialog.onclose = null;
     if (dialog.open) dialog.close();
   }
-  provider.isWalletConnect = true;
+  // A wallet may approve several networks and start on another one; the session is moved to ours.
+  if (Number(provider.chainId) !== Number(config.chainId))
+    await Promise.race([
+      provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: "0x" + Number(config.chainId).toString(16) }],
+      }),
+      new Promise((resolve) => setTimeout(resolve, 15000)),
+    ]).catch(() => {}); // validateChain reports it if the wallet did not follow
   await attachWallet(provider, "연결된 지갑 (QR)");
 }
 async function txAction(title, message, action) {
