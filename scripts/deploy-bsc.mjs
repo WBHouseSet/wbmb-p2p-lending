@@ -30,9 +30,9 @@ const TOKEN_ABI = [
   "function symbol() view returns (string)",
 ];
 
-const isMnemonic = (text) => text.includes(" ");
+export const isMnemonic = (text) => text.includes(" ");
 // First line of a key file that is not blank or a `#` comment.
-const secretLine = (secret) =>
+export const secretLine = (secret) =>
   String(secret || "")
     .split("\n")
     .map((l) => l.trim())

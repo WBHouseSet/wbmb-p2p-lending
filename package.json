@@ -15,6 +15,7 @@
     "check": "npm test && npm run build && npm run test:browser",
     "test:real": "npm run compile && node --test tests/real/*.test.mjs",
     "deploy:bsc": "node scripts/deploy-bsc.mjs",
+    "relay:council": "node scripts/relay-council.mjs",
     "build:live": "node scripts/build-live.mjs",
     "test:live": "playwright test -c playwright.live.config.js",
     "rehearse": "npm run test:real && npm run test:live"
