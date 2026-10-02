@@ -857,6 +857,7 @@ dialog::backdrop {
   justify-items: center;
   text-align: center;
   max-width: 340px;
+  margin: 0 auto;
 }
 .qr-box h2 {
   margin: 0;
