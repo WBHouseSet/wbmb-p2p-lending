@@ -84,8 +84,8 @@ export async function runCouncilLiveTest({
     // The terms the web page posts, with the shortest period this market accepts.
     const terms = {
       aprBps: 10000, // 100% APR so a minute of interest is visible on a tiny loan
-      haircutBps: 4000,
-      liquidationBps: 8000,
+      haircutBps: 5000,
+      liquidationBps: 7000,
       duration,
       grace,
       mode: 0,
@@ -288,7 +288,7 @@ export async function runCouncilLiveTest({
       );
     // Collateral for one loan at the fill price; the contract's own figure is used when filling.
     const each = priced
-      ? ceilDiv(p * WBMB_UNIT * BPS, priced.opening * (BPS - 4000n))
+      ? ceilDiv(p * WBMB_UNIT * BPS, priced.opening * (BPS - 5000n))
       : 0n;
     const wbmbNeed = 2n * each + extra;
     const GAS_FLOAT = gasPrice * LENDER_GAS_UNITS; // BNB moved to the lender wallet for gas
@@ -372,11 +372,11 @@ export async function runCouncilLiveTest({
       JSON.stringify({ lending: lendingAddress, loanB, dueAt }, null, 2) + "\n",
     );
     const [opening] = await policy.prices();
-    // Recomputed here: collateral worth the principal at 60% of the council price.
+    // Recomputed here: collateral worth the principal at 50% of the council price.
     expect(
-      `대출 B 담보 = 원금 ÷ (가격 ${u(opening)} × 60%)`,
+      `대출 B 담보 = 원금 ÷ (가격 ${u(opening)} × 50%)`,
       lb.collateral,
-      ceilDiv(p * WBMB_UNIT * BPS, opening * (BPS - 4000n)),
+      ceilDiv(p * WBMB_UNIT * BPS, opening * (BPS - 5000n)),
     );
     const healthy = await lending.quoteSettlement(loanB).then(
       () => false,

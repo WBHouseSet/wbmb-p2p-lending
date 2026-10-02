@@ -358,7 +358,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     );
     assert.equal(record.lending, r.lending);
     assert.notEqual(record.pricePolicy, ZeroAddress);
-    assert.equal(record.liquidationBonusBps, 500);
+    assert.equal(record.liquidationBonusBps, 1000);
     assert.equal(record.staleSettleDelay, 300);
     assert.equal(record.council.reporter, reporter);
     assert.equal(record.council.minInterval, 300);
@@ -369,7 +369,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     );
     assert.equal(await lending.pricePolicy(), record.pricePolicy);
     assert.equal(await lending.oracleFree(), false);
-    assert.equal(await lending.liquidationBonusBps(), 500n);
+    assert.equal(await lending.liquidationBonusBps(), 1000n);
     assert.equal(await lending.minGrace(), 300n);
     const policy = new Contract(
       record.pricePolicy,
@@ -384,7 +384,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(web.policy, "council");
     assert.equal(web.oracleFree, undefined);
     assert.equal(web.addresses.oracle, record.pricePolicy);
-    assert.equal(web.liquidationBonusBps, 500);
+    assert.equal(web.liquidationBonusBps, 1000);
     // The pin of a council record names the price contract, and the RPC endpoint as well.
     assert.equal(livePinned(record).oracle, record.pricePolicy);
     assert.equal(livePinned(record).rpcUrl, web.rpcUrl);

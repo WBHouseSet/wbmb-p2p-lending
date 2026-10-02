@@ -238,18 +238,23 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
 }
 export const COUNCIL_TERMS = {
   aprBps: 1200,
-  haircutBps: 4000,
-  liquidationBps: 8000,
+  haircutBps: 5000,
+  liquidationBps: 7000,
   duration: 30 * 86400,
   grace: 86400,
   mode: 0,
 };
+export const COUNCIL_BONUS_BPS = 1000;
 export const COUNCIL_REPORTER_INDEX = 4;
 export const COUNCIL_MAX_AGE = 6 * 86400;
 /// Council-price market with mock tokens. The local policy has no change interval and a wide
 /// change limit so the lab can move the price freely; the limits themselves are tested in
-/// tests/council.test.mjs.
-export async function deployCouncilFixture(provider, { seed = false } = {}) {
+/// tests/council.test.mjs. The default terms and bonus are the ones the web page and the BSC
+/// deployment use; a test may pass its own.
+export async function deployCouncilFixture(
+  provider,
+  { seed = false, terms = COUNCIL_TERMS, bonusBps = COUNCIL_BONUS_BPS } = {},
+) {
   await assertLocal(provider);
   const accounts = await Promise.all(
     [0, 1, 2, 3].map((i) => provider.getSigner(i)),
@@ -299,7 +304,7 @@ export async function deployCouncilFixture(provider, { seed = false } = {}) {
     500,
     3600,
     86400,
-    500,
+    bonusBps,
     7 * 86400,
   ]);
   for (const address of addresses) {
@@ -314,14 +319,14 @@ export async function deployCouncilFixture(provider, { seed = false } = {}) {
     await (
       await lending
         .connect(borrower)
-        .createOffer(0, us(600), wb(10), us(10), expires, COUNCIL_TERMS)
+        .createOffer(0, us(350), wb(10), us(10), expires, terms)
     ).wait();
     await (await usdt.connect(lender).approve(lending.target, us(1000))).wait();
     await (
       await lending
         .connect(lender)
         .createOffer(1, us(1000), 0, us(10), expires, {
-          ...COUNCIL_TERMS,
+          ...terms,
           aprBps: 1000,
           duration: 14 * 86400,
         })
@@ -340,7 +345,8 @@ export async function deployCouncilFixture(provider, { seed = false } = {}) {
     oracle,
     lending,
     feeWallet,
-    terms: COUNCIL_TERMS,
+    terms,
+    bonusBps,
     reporter,
     reporterAddress,
     publishPrice,
@@ -357,7 +363,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
       deployedAt: new Date().toISOString(),
       feeWallet: f.feeWallet,
       feeBps: 500,
-      liquidationBonusBps: 500,
+      liquidationBonusBps: f.bonusBps,
       addresses: {
         usdt: f.usdt.target,
         wbmb: f.wbmb.target,

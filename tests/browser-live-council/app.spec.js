@@ -82,7 +82,7 @@ test("lender posts, borrower fills at the council price and tops up", async ({
   await connect(lender);
   await lender.locator("#open-offer").click();
   await lender.locator('#offer-form [name="side"]').selectOption("1");
-  await lender.locator('#offer-form [name="total"]').fill("673.8");
+  await lender.locator('#offer-form [name="total"]').fill("561.5");
   await lender.locator('#offer-form [name="minFill"]').fill("10");
   await lender.locator('#offer-form button[type="submit"]').click();
   await commit(lender, "거래 게시 완료");
@@ -91,9 +91,9 @@ test("lender posts, borrower fills at the council price and tops up", async ({
   await open(borrower);
   await connect(borrower);
   await borrower.locator('[data-tab="borrow"]').click();
-  await borrower.locator('[data-fill-amount="1"]').fill("673.8");
+  await borrower.locator('[data-fill-amount="1"]').fill("561.5");
   await borrower.locator('[data-offer="1"] [data-action="fill"]').click();
-  // 673.8 / (112.3 * 0.6) = 10 WBMB
+  // 561.5 / (112.3 * 0.5) = 10 WBMB
   await expect(borrower.locator("#confirm-body")).toContainText(
     "배정 담보: 10 WBMB",
   );
@@ -114,7 +114,7 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
   await connect(lender);
   await lender.locator("#open-offer").click();
   await lender.locator('#offer-form [name="side"]').selectOption("1");
-  await lender.locator('#offer-form [name="total"]').fill("67.38");
+  await lender.locator('#offer-form [name="total"]').fill("56.15");
   await lender.locator('#offer-form [name="minFill"]').fill("10");
   await lender.locator('#offer-form [name="apr"]').fill("0");
   await lender.locator('#offer-form [name="duration"]').fill("1");
@@ -125,14 +125,14 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
   await open(borrower);
   await connect(borrower);
   await borrower.locator('[data-tab="borrow"]').click();
-  await borrower.locator('[data-fill-amount="2"]').fill("67.38");
+  await borrower.locator('[data-fill-amount="2"]').fill("56.15");
   await borrower.locator('[data-offer="2"] [data-action="fill"]').click();
-  // 67.38 / (112.3 * 0.6) = 1 WBMB, liquidated at 67.38 / (1 * 0.8) = 84.225
+  // 56.15 / (112.3 * 0.5) = 1 WBMB, liquidated at 56.15 / (1 * 0.7) = 80.2143
   await expect(borrower.locator("#confirm-body")).toContainText(
     "배정 담보: 1 WBMB",
   );
   await expect(borrower.locator("#confirm-body")).toContainText(
-    "청산 가격: 84.225 USDT 이하",
+    /청산 가격: 80\.214\d USDT 이하/,
   );
   await commit(borrower, "부분 체결 완료");
   // One day to maturity, one day of grace. The relayed price stays valid for six days.
@@ -142,17 +142,17 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
   await expect(borrower.locator("#price-state")).toContainText("유효");
   await borrower.locator('[data-tab="mine"]').click();
   await borrower.locator('[data-loan="2"] [data-action="settle"]').click();
-  // No interest (APR 0): 67.38 * 1.05 / 112.3 = 0.63 WBMB to the lender, 0.37 back.
+  // No interest (APR 0): 56.15 * 1.1 / 112.3 = 0.55 WBMB to the lender, 0.45 back.
   const body = borrower.locator("#confirm-body");
-  await expect(body).toContainText("대출자 귀속 0.63 WBMB");
-  await expect(body).toContainText("차입자 반환 0.37 WBMB");
-  await expect(body).toContainText("종료 부채 67.38 USDT");
-  await expect(body).toContainText("적용 가격 112.3 USDT · 보너스 5% 포함");
+  await expect(body).toContainText("대출자 귀속 0.55 WBMB");
+  await expect(body).toContainText("차입자 반환 0.45 WBMB");
+  await expect(body).toContainText("종료 부채 56.15 USDT");
+  await expect(body).toContainText("적용 가격 112.3 USDT · 보너스 10% 포함");
   await commit(borrower, "WBMB 정산 완료");
-  await expect(borrower.locator(".claim-box")).toContainText("0.37 WBMB");
+  await expect(borrower.locator(".claim-box")).toContainText("0.45 WBMB");
   await lender.locator("#refresh").click();
   await lender.locator('[data-tab="mine"]').click();
-  await expect(lender.locator(".claim-box")).toContainText("0.63 WBMB");
+  await expect(lender.locator(".claim-box")).toContainText("0.55 WBMB");
 });
 
 test("rejects a swapped oracle address", async ({ page }) => {

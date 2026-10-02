@@ -9,8 +9,8 @@ const RPC = "http://127.0.0.1:18562";
 const DAY = 86400;
 const STANDARD = {
   aprBps: 1000,
-  haircutBps: 4000,
-  liquidationBps: 8000,
+  haircutBps: 5000,
+  liquidationBps: 7000,
   duration: 14 * DAY,
   grace: DAY,
   mode: 0,
@@ -144,9 +144,9 @@ test("council market shows the council price, a fee tab and the fixed margins", 
   );
   await page.locator('[data-tab="borrow"]').click();
   await expect(page.locator('[data-offer="2"]')).toContainText("담보 여유");
-  await expect(page.locator('[data-offer="2"]')).toContainText("40%");
-  await expect(offerCell(page, 2, "담보 여유")).toHaveText("40%");
-  await expect(offerCell(page, 2, "청산선")).toHaveText("80%");
+  await expect(page.locator('[data-offer="2"]')).toContainText("50%");
+  await expect(offerCell(page, 2, "담보 여유")).toHaveText("50%");
+  await expect(offerCell(page, 2, "청산선")).toHaveText("70%");
   await expect(page.locator('[data-offer="2"]')).not.toContainText(
     "비표준 조건",
   );
@@ -159,41 +159,41 @@ test("the fill dialog tells a lender what settlement pays: debt plus the bonus, 
   await ready(page);
   await account(page, 2);
   await page.locator('[data-tab="lend"]').click();
-  // Seeded borrow request: 600 USDT against 10 WBMB.
-  await page.locator('[data-fill-amount="1"]').fill("600");
+  // Seeded borrow request: 350 USDT against 10 WBMB.
+  await page.locator('[data-fill-amount="1"]').fill("350");
   await page.locator('[data-offer="1"] [data-action="fill"]').click();
   const body = page.locator("#confirm-body");
-  await expect(body).toContainText("내가 보내는 것: 600 USDT");
+  await expect(body).toContainText("내가 보내는 것: 350 USDT");
   await expect(body).toContainText(
-    "내가 받는 것: 상환되면 원금과 이자(USDT), 정산되면 부채에 보너스 5%를 더한 만큼의 WBMB(담보가 모자라면 담보 전부)",
+    "내가 받는 것: 상환되면 원금과 이자(USDT), 정산되면 부채에 보너스 10%를 더한 만큼의 WBMB(담보가 모자라면 담보 전부)",
   );
   await expect(body).not.toContainText("미상환이면 담보 WBMB");
-  await expect(body).toContainText("청산선 80%");
-  await expect(body).toContainText("청산 가격: 75 USDT 이하");
+  await expect(body).toContainText("청산선 70%");
+  await expect(body).toContainText("청산 가격: 50 USDT 이하");
   await expect(body).toContainText("나머지 담보는 차입자에게 돌아갑니다");
   await page.locator("#confirm-cancel").click();
   await expect(page.locator("#status")).toContainText("거래를 취소했습니다");
 });
 
-test("borrower takes a lend offer, price falls, top-up rescues, further fall settles with a 5% bonus", async ({
+test("borrower takes a lend offer, price falls, top-up rescues, further fall settles with a 10% bonus", async ({
   page,
 }) => {
   await ready(page);
   await account(page, 1);
   await page.locator('[data-tab="borrow"]').click();
-  await page.locator('[data-fill-amount="2"]').fill("600");
+  await page.locator('[data-fill-amount="2"]').fill("700");
   await page.locator('[data-offer="2"] [data-action="fill"]').click();
   await expect(page.locator("#confirm-body")).toContainText(
-    "배정 담보: 10 WBMB",
+    "배정 담보: 14 WBMB",
   );
   // Before confirming, the borrower sees where this fill would be liquidated and what it costs:
-  // 600 / (10 WBMB * 0.8) = 75, and settlement pays the lender the debt plus the on-chain bonus.
-  await expect(page.locator("#confirm-body")).toContainText("청산선 80%");
+  // 700 / (14 WBMB * 0.7) = 71.43, and settlement pays the lender the debt plus the on-chain bonus.
+  await expect(page.locator("#confirm-body")).toContainText("청산선 70%");
   await expect(page.locator("#confirm-body")).toContainText(
-    "청산 가격: 75 USDT 이하",
+    /청산 가격: 71\.428\d USDT 이하/,
   );
   await expect(page.locator("#confirm-body")).toContainText(
-    "부채에 보너스 5%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다",
+    "부채에 보너스 10%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다",
   );
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();
@@ -201,14 +201,12 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   await expect(page.locator('[data-loan="1"] .loan-detail')).toContainText(
     "나머지는 차입자에게 돌아갑니다",
   );
-  // debt 600 / (10 WBMB * 0.8) = 75
-  // Fill happens at price 100, so the loan can lose a quarter of the price before liquidation.
+  // debt 700 / (14 WBMB * 0.7) = 71.43
+  // Fill happens at price 100, so the loan can lose 28.6% of the price before liquidation.
   // The seeded offer charges 10% APR, so a few seconds of interest may move the last digits.
-  await expect(cell(page, 1, "청산 가격")).toHaveText(
-    /^75(\.0\d*)? USDT 이하$/,
-  );
-  await expect(cell(page, 1, "청산까지 여유")).toHaveText(/^(25|24\.9)%$/);
-  await setPrice(page, 74);
+  await expect(cell(page, 1, "청산 가격")).toHaveText(/^71\.4\d* USDT 이하$/);
+  await expect(cell(page, 1, "청산까지 여유")).toHaveText(/^28\.[56]%$/);
+  await setPrice(page, 70);
   await page.locator('[data-topup-amount="1"]').fill("1");
   await page.locator('[data-loan="1"] [data-action="topup"]').click();
   await commit(page, "담보 추가 완료");
@@ -216,23 +214,23 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   await expect(page.locator("#status")).toContainText(
     "가격 청산 조건에 해당하지 않습니다",
   );
-  await setPrice(page, 63);
+  await setPrice(page, 55);
   await expect(cell(page, 1, "청산까지 여유")).toHaveText("청산 대상");
   await page.locator('[data-loan="1"] [data-action="settle"]').click();
-  // 600 * 1.05 / 63 = 10 WBMB to the lender, 1 back to the borrower
+  // 700 * 1.1 / 55 = 14 WBMB to the lender, 1 of the 15 back to the borrower
   // The seeded offer charges 10% APR, so a few seconds of interest may show in the last digits.
   await expect(page.locator("#confirm-body")).toContainText(
-    /대출자 귀속 10(\.0000\d+)? WBMB/,
+    /대출자 귀속 14(\.0000\d+)? WBMB/,
   );
   await expect(page.locator("#confirm-body")).toContainText(
     /차입자 반환 (1|0\.9999\d+) WBMB/,
   );
-  await expect(page.locator("#confirm-body")).toContainText("보너스 5%");
+  await expect(page.locator("#confirm-body")).toContainText("보너스 10%");
   await commit(page, "WBMB 정산 완료");
   await expect(page.locator(".claim-box")).toContainText(/(1|0\.9999\d+) WBMB/);
 });
 
-test("posting a lend offer uses the council margins, then a fill gets the 80% liquidation line", async ({
+test("posting a lend offer uses the council margins, then a fill gets the 70% liquidation line", async ({
   page,
 }) => {
   await ready(page);
@@ -241,9 +239,9 @@ test("posting a lend offer uses the council margins, then a fill gets the 80% li
   await page.locator("#open-offer").click();
   await page.locator('#offer-form [name="side"]').selectOption("1");
   await expect(page.locator("#collateral-field")).toBeHidden();
-  await expect(page.locator("#terms-note")).toContainText("60%");
-  await expect(page.locator("#terms-note")).toContainText("80%");
-  await expect(page.locator("#terms-note")).toContainText("5%");
+  await expect(page.locator("#terms-note")).toContainText("50%");
+  await expect(page.locator("#terms-note")).toContainText("70%");
+  await expect(page.locator("#terms-note")).toContainText("10%");
   // The stale-price rule is read from the contract (7 days on the local market).
   await expect(page.locator("#terms-note")).toContainText(
     "가격 갱신이 끊긴 채로 유예 종료와 가격 만료 뒤 각각 7일이 지나면 담보 전부가 대출자에게 갑니다.",
@@ -253,19 +251,17 @@ test("posting a lend offer uses the council margins, then a fill gets the 80% li
   await account(page, 1);
   await page.locator('[data-tab="borrow"]').click();
   await expect(page.locator('[data-offer="3"]')).toContainText("담보 여유");
-  await expect(page.locator('[data-offer="3"]')).toContainText("40%");
+  await expect(page.locator('[data-offer="3"]')).toContainText("50%");
   await page.locator('[data-fill-amount="3"]').fill("90");
   await page.locator('[data-offer="3"] [data-action="fill"]').click();
-  // 90 USDT at 40% margin and price 100 needs 1.5 WBMB.
+  // 90 USDT at 50% margin and price 100 needs 1.8 WBMB.
   await expect(page.locator("#confirm-body")).toContainText(
-    "배정 담보: 1.5 WBMB",
+    "배정 담보: 1.8 WBMB",
   );
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();
-  // The posted terms were 40% margin / 80% liquidation: 90 / (1.5 * 0.8) = 75.
-  await expect(cell(page, 2, "청산 가격")).toHaveText(
-    /^75(\.0\d*)? USDT 이하$/,
-  );
+  // The posted terms were 50% margin / 70% liquidation: 90 / (1.8 * 0.7) = 71.43.
+  await expect(cell(page, 2, "청산 가격")).toHaveText(/^71\.4\d* USDT 이하$/);
   await expect(page.locator('[data-loan="2"]')).toContainText(
     "가격 하락 / 만기 미상환 · 초과담보 반환",
   );
@@ -303,10 +299,10 @@ test("offers posted straight to the contract with other margins are not listed; 
   await setPrice(page, 100); // the previous test left the price expired
   const config = await deployment(page);
   const [lendId, borrowId] = await onChain(async (provider) => [
-    // Margin 40% like the form, but a liquidation line of 61%: a 2% price drop would settle it.
+    // Margin 50% like the form, but a liquidation line of 51%: a 2% price drop would settle it.
     await postDirect(provider, config, 3, 1, us(500), 0n, {
       ...STANDARD,
-      liquidationBps: 6100,
+      liquidationBps: 5100,
     }),
     // A borrow request with a 1% margin.
     await postDirect(provider, config, 3, 0, us(99), wb(1), {
@@ -323,7 +319,7 @@ test("offers posted straight to the contract with other margins are not listed; 
     await expect(page.locator(`[data-offer="${id}"]`)).toContainText(
       "비표준 조건",
     );
-  await expect(offerCell(page, lendId, "청산선")).toHaveText("61%");
+  await expect(offerCell(page, lendId, "청산선")).toHaveText("51%");
   await expect(offerCell(page, borrowId, "담보 여유")).toHaveText("1%");
   await expect(
     page.locator(`[data-offer="${lendId}"] [data-action="fill"]`),

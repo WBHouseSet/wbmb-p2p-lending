@@ -66,8 +66,8 @@ const vault = () => fixed() || council();
 // (any haircut from 1% to 90% with a liquidation line above 1 - haircut), so offers with other
 // terms can exist; the page keeps them off the market tabs and does not fill them.
 const COUNCIL_TERMS = {
-  haircutBps: 4000,
-  liquidationBps: 8000,
+  haircutBps: 5000,
+  liquidationBps: 7000,
   mode: 0,
   grace: 86400,
 };

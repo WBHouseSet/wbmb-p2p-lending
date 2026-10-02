@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { network } from "hardhat";
 import { BrowserProvider } from "ethers";
 import {
+  COUNCIL_TERMS,
   deployCouncilFixture,
   deployContract,
   us,
@@ -18,7 +19,11 @@ describe("council-price market", () => {
       cacheTimeout: -1,
     });
     provider.pollingInterval = 10;
-    f = await deployCouncilFixture(provider);
+    // Round numbers for the contract arithmetic: 60% LTV, 80% line, 5% bonus.
+    f = await deployCouncilFixture(provider, {
+      terms: { ...COUNCIL_TERMS, haircutBps: 4000, liquidationBps: 8000 },
+      bonusBps: 500,
+    });
     snap = await provider.send("evm_snapshot", []);
   });
   beforeEach(async () => {

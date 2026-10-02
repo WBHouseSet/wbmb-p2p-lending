@@ -28,8 +28,8 @@ describe("council live test script rehearsal (local chain id 56, real token byte
   const at = (n) =>
     HDNodeWallet.fromPhrase(phrase, undefined, `m/44'/60'/0'/0/${n}`).address;
   const BAL = ["function balanceOf(address) view returns (uint256)"];
-  // 112.3 USDT per WBMB: 0.002 USDT at 60% needs ceil(0.002 / 67.38) = 0.00002969 WBMB
-  const EACH = 2969n;
+  // 112.3 USDT per WBMB: 0.002 USDT at 50% needs ceil(0.002 / 56.15) = 0.00003562 WBMB
+  const EACH = 3562n;
   let server, local, dir, record, lendingAddress, stateFile, usdt, wbmb;
   const lines = [];
   const log = (x) => lines.push(x);
@@ -151,7 +151,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
     const r = await run({ execute: true });
     assert.equal(r.ready, false);
     assert.equal(r.problems.length, 2);
-    assert.match(r.problems.join("\n"), /WBMB 0\.00006938/);
+    assert.match(r.problems.join("\n"), /WBMB 0\.00008124/);
     assert.match(r.problems.join("\n"), /USDT 0\.004/);
     assert.equal(await local.getTransactionCount(at(0)), nonce);
   });
@@ -213,21 +213,21 @@ describe("council live test script rehearsal (local chain id 56, real token byte
     await local.send("evm_revert", [snapshot]);
   });
 
-  it("after maturity + grace the lender gets debt + 5% and the borrower the rest", async () => {
+  it("after maturity + grace the lender gets debt + 10% and the borrower the rest", async () => {
     await advance(300 + 300);
     const dry = await run({ settle: true });
     assert.equal(dry.settled, false);
     const r = await run({ settle: true, execute: true });
     assert.equal(r.settled, true);
     assert.equal(r.price, parseUnits("112.3", 18));
-    // debt = 0.002 USDT + 5 minutes at 100% APR; lender share = debt × 1.05 ÷ 112.3, rounded up
+    // debt = 0.002 USDT + 5 minutes at 100% APR; lender share = debt × 1.1 ÷ 112.3, rounded up
     const debt =
       parseUnits("0.002", 18) +
       (parseUnits("0.002", 18) * 300n + 31536000n - 1n) / 31536000n;
     assert.equal(r.debt, debt);
     const share =
-      (debt * 10500n * 10n ** 8n + r.price * 10000n - 1n) / (r.price * 10000n);
-    assert.equal(share, 1871n);
+      (debt * 11000n * 10n ** 8n + r.price * 10000n - 1n) / (r.price * 10000n);
+    assert.equal(share, 1960n);
     assert.equal(r.toLender, share);
     assert.equal(r.toBorrower, EACH + 1000n - share);
     assert.equal(await wbmb.balanceOf(at(1)), share);

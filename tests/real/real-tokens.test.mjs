@@ -279,8 +279,8 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
   let c, provider, usdt, wbmb, lending, oracle, borrower, lender, reporter, A;
   const TERMS = {
     aprBps: 0,
-    haircutBps: 4000,
-    liquidationBps: 8000,
+    haircutBps: 5000,
+    liquidationBps: 7000,
     duration: 30 * 86400,
     grace: 86400,
     mode: 0,
@@ -365,7 +365,7 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
         .createOffer(1, us(1000), 0, us(10), (await now()) + 86400, TERMS),
     );
     const collateral = await lending.quoteFill(1, us(600));
-    assert.equal(collateral, wb(10));
+    assert.equal(collateral, wb(12)); // 600 / (100 × 50%)
     await tx(wbmb.connect(borrower).approve(lending.target, collateral));
     const usdtBefore = await usdt.balanceOf(A.borrower);
     await tx(
@@ -374,14 +374,14 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
         .fillOffer(1, us(600), collateral, (await now()) + 300),
     );
     assert.equal(await usdt.balanceOf(A.borrower), usdtBefore + us(600));
-    await publish(70);
+    await publish(66); // below the 70% line (71.43); 600 × 1.1 / 66 = 10 WBMB
     await tx(lending.connect(lender).settle(1));
     const lenderBefore = await wbmb.balanceOf(A.lender);
     const borrowerBefore = await wbmb.balanceOf(A.borrower);
     await tx(lending.connect(lender).claimWBMB());
     await tx(lending.connect(borrower).claimWBMB());
-    assert.equal(await wbmb.balanceOf(A.lender), lenderBefore + wb(9));
-    assert.equal(await wbmb.balanceOf(A.borrower), borrowerBefore + wb(1));
+    assert.equal(await wbmb.balanceOf(A.lender), lenderBefore + wb(10));
+    assert.equal(await wbmb.balanceOf(A.borrower), borrowerBefore + wb(2));
     await tx(lending.connect(lender).closeOffer(1));
     await tx(lending.connect(lender).claimUSDT());
     const [u, w] = await lending.liabilities();
