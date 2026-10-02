@@ -138,3 +138,18 @@ for (const [name, edit] of [
     );
   });
 }
+
+// The read endpoint is compiled into the build as well: a file that keeps every address
+// but sends the page's reads elsewhere is refused before anything is fetched from it.
+test("rejects a file whose RPC endpoint was rewritten", async ({ page }) => {
+  await page.route("**/deployment.json", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.rpcUrl = json.rpcUrl.replace("127.0.0.1", "localhost");
+    await route.fulfill({ response, json });
+  });
+  await page.goto("/");
+  await expect(page.locator("#status")).toContainText(
+    "허용되지 않은 배포 설정입니다",
+  );
+});

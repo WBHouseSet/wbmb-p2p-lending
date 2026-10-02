@@ -401,15 +401,18 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
 const isCouncilRecord = (record) =>
   Boolean(record.pricePolicy) && BigInt(record.pricePolicy) !== 0n;
 
-/// The addresses compiled into a live bundle as __PINNED__. The price contract is pinned
+/// The values compiled into a live bundle as __PINNED__. The price contract is pinned
 /// only for a council record, so the build alone decides which market the page accepts.
-export function livePinned(record) {
+/// `rpcUrl` must be the URL given to liveWebConfig: the page reads every term, quote and
+/// price through it, so a fetched file may not point those reads anywhere else.
+export function livePinned(record, rpcUrl = BSC.rpcUrl) {
   return {
     chainId: record.chainId,
     lending: record.lending,
     usdt: record.usdt,
     wbmb: record.wbmb,
     feeWallet: record.feeWallet,
+    rpcUrl,
     ...(isCouncilRecord(record) ? { oracle: record.pricePolicy } : {}),
   };
 }

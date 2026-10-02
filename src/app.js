@@ -66,7 +66,7 @@ let bonusPct = "0";
 let priceLive = true;
 let currentPrice = 0n;
 let staleDelay = "";
-// Addresses compiled into a live build. A live page only talks to exactly these.
+// Addresses and the RPC endpoint compiled into a live build. A live page only talks to exactly these.
 const PINNED = typeof __PINNED__ === "undefined" ? null : __PINNED__;
 let feePct = "5";
 // Exact amount with no rounding, for what the user is about to sign.
@@ -996,7 +996,8 @@ async function init() {
     typeof b === "string" &&
     a.toLowerCase() === b.toLowerCase();
   // The fetched file must match the addresses compiled into this build, so a swapped
-  // deployment.json cannot redirect approvals to another contract.
+  // deployment.json cannot redirect approvals to another contract. The RPC endpoint is
+  // pinned as well: every term, quote and price the page shows is read through it.
   const liveOk =
     config.demo === false &&
     // The build decides the market type; the fetched file cannot change it.
@@ -1009,6 +1010,8 @@ async function init() {
     typeof config.chainId === "number" &&
     Object.hasOwn(LIVE_CHAINS, config.chainId) &&
     config.chainId === PINNED.chainId &&
+    typeof PINNED.rpcUrl === "string" &&
+    config.rpcUrl === PINNED.rpcUrl &&
     ["lending", "usdt", "wbmb"].every((k) =>
       sameAddress(config.addresses?.[k], PINNED[k]),
     ) &&

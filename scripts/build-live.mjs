@@ -24,15 +24,16 @@ fs.writeFileSync(
     Object.fromEntries(liveAbiNames(record).map((name) => [name, abis[name]])),
   ) + "\n",
 );
+const web = liveWebConfig(record, process.env.BSC_RPC_URL);
 fs.writeFileSync(
   `${publicDir}/deployment.json`,
-  JSON.stringify(liveWebConfig(record, process.env.BSC_RPC_URL), null, 2) +
-    "\n",
+  JSON.stringify(web, null, 2) + "\n",
 );
-// Addresses are compiled into the bundle; the page refuses a deployment.json that differs.
+// Addresses and the RPC endpoint are compiled into the bundle; the page refuses a
+// deployment.json that differs. Changing the endpoint therefore means building again.
 await build({
   publicDir,
-  define: { __PINNED__: JSON.stringify(livePinned(record)) },
+  define: { __PINNED__: JSON.stringify(livePinned(record, web.rpcUrl)) },
   build: { outDir, emptyOutDir: true },
 });
 console.log(

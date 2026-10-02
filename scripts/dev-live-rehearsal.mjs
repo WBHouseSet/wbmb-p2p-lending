@@ -128,7 +128,7 @@ try {
   web = await createServer({
     publicDir,
     define: {
-      __PINNED__: JSON.stringify(livePinned(record)),
+      __PINNED__: JSON.stringify(livePinned(record, url)),
     },
     server: { host: "127.0.0.1", port: appPort, strictPort: true },
   });

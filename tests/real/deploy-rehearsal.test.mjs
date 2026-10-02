@@ -142,7 +142,14 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       "usdt",
       "wbmb",
       "feeWallet",
+      "rpcUrl",
     ]);
+    // The RPC endpoint is pinned too, and is the one the web config carries.
+    assert.equal(livePinned(record).rpcUrl, BSC.rpcUrl);
+    assert.equal(livePinned(record).rpcUrl, web.rpcUrl);
+    const other = "https://rpc.example.invalid";
+    assert.equal(livePinned(record, other).rpcUrl, other);
+    assert.equal(liveWebConfig(record, other).rpcUrl, other);
     assert.deepEqual(liveAbiNames(record), ["P2PLending"]);
   });
 
@@ -378,8 +385,10 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(web.oracleFree, undefined);
     assert.equal(web.addresses.oracle, record.pricePolicy);
     assert.equal(web.liquidationBonusBps, 500);
-    // The pin of a council record names the price contract.
+    // The pin of a council record names the price contract, and the RPC endpoint as well.
     assert.equal(livePinned(record).oracle, record.pricePolicy);
+    assert.equal(livePinned(record).rpcUrl, web.rpcUrl);
+    assert.equal(livePinned(record, url).rpcUrl, url);
     assert.deepEqual(liveAbiNames(record), [
       "P2PLending",
       "CouncilPricePolicy",
