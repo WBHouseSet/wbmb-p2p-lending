@@ -83,7 +83,7 @@ USDT 대출원금은 이미 차입자에게 지급됐으므로 보유 잔액에 
 
 ## 카운슬 가격형 시장 (v0.3, 2026-10-02)
 
-미상환·담보가치 하락 때 **부채에 해당하는 WBMB만** 대출자에게 주고 나머지 담보는 차입자에게 돌려주는 세 번째 시장이다. 가격은 모빅 카운슬 가격이고, 사람이 돌리는 중계 봇이 그 값을 `CouncilPricePolicy`에 옮겨 적는다. 설계와 근거는 `docs/superpowers/specs/2026-10-02-council-price-liquidation-design.md`, 운영 방법은 [MAINNET.md](MAINNET.md) 8절. 아직 배포하지 않았다.
+미상환·담보가치 하락 때 **부채에 보너스 5%를 더한 만큼의 WBMB만** 대출자에게 주고 나머지 담보는 차입자에게 돌려주는 세 번째 시장이다. 가격은 모빅 카운슬 가격이고, 사람이 돌리는 중계 봇이 그 값을 `CouncilPricePolicy`에 옮겨 적는다. 설계와 근거는 `docs/superpowers/specs/2026-10-02-council-price-liquidation-design.md`, 운영 방법은 [MAINNET.md](MAINNET.md) 8절. 아직 배포하지 않았다.
 
 ### CouncilPricePolicy
 

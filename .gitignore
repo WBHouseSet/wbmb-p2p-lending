@@ -13,5 +13,6 @@ playwright-report/
 *.log
 dist-live/
 dist-live-council/
+dist-live-council-test/
 *.key
 deployments/*.local.json
