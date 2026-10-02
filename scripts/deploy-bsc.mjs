@@ -60,7 +60,15 @@ export function loadDeployer(secret, provider, index = 0) {
   }
 }
 
+// "main" is the market for real use. "test" is a separate market whose only difference is
+// short minimums, so a full default-and-settle cycle can be checked in minutes.
+export const PROFILES = {
+  main: { file: "bsc.json", minDuration: 3600, minGrace: 86400 },
+  test: { file: "bsc-test.json", minDuration: 300, minGrace: 300 },
+};
+
 export async function deployBsc({
+  profile = "main",
   rpcUrl = BSC.rpcUrl,
   secret,
   index = 0,
@@ -118,7 +126,12 @@ export async function deployBsc({
         "FEE_WALLET 주소가 올바르지 않습니다. 직접 관리하는 지갑 주소여야 합니다.",
       );
     const fee = feeWallet ? getAddress(feeWallet) : from;
-    const recordFile = path.join(outDir, "bsc.json");
+    if (!Object.hasOwn(PROFILES, profile))
+      throw new Error(
+        "알 수 없는 profile 입니다. main 또는 test 만 가능합니다.",
+      );
+    const limits = PROFILES[profile];
+    const recordFile = path.join(outDir, limits.file);
     if (broadcast && fs.existsSync(recordFile))
       throw new Error(
         `이미 배포 기록이 있습니다: ${recordFile}. 다시 배포하려면 이 파일을 먼저 다른 곳으로 옮기세요.`,
@@ -129,6 +142,8 @@ export async function deployBsc({
       ZeroAddress,
       fee || "0x000000000000000000000000000000000000dEaD",
       BSC.feeBps,
+      limits.minDuration,
+      limits.minGrace,
     ];
     const a = artifact("P2PLending");
     const factory = new ContractFactory(
@@ -183,19 +198,24 @@ export async function deployBsc({
     // Printed before any further RPC call so the address is never lost to a flaky read.
     log(`컨트랙트   ${address} (블록 ${receipt.blockNumber}) · 설정 확인 중…`);
     // Read back what was actually deployed instead of trusting the inputs.
-    const [usdt, wbmb, policy, vault, feeBps] = await Promise.all([
-      contract.usdt(),
-      contract.wbmb(),
-      contract.pricePolicy(),
-      contract.feeVault(),
-      contract.feeBps(),
-    ]);
+    const [usdt, wbmb, policy, vault, feeBps, minDuration, minGrace] =
+      await Promise.all([
+        contract.usdt(),
+        contract.wbmb(),
+        contract.pricePolicy(),
+        contract.feeVault(),
+        contract.feeBps(),
+        contract.minDuration(),
+        contract.minGrace(),
+      ]);
     if (
       usdt !== BSC.usdt ||
       wbmb !== BSC.wbmb ||
       policy !== ZeroAddress ||
       vault !== fee ||
-      feeBps !== BigInt(BSC.feeBps)
+      feeBps !== BigInt(BSC.feeBps) ||
+      minDuration !== BigInt(limits.minDuration) ||
+      minGrace !== BigInt(limits.minGrace)
     )
       throw new Error(
         "배포된 컨트랙트의 설정이 예상과 다릅니다. 사용하지 마세요: " + address,
@@ -207,6 +227,9 @@ export async function deployBsc({
       deployer: from,
       feeWallet: fee,
       feeBps: BSC.feeBps,
+      profile,
+      minDuration: limits.minDuration,
+      minGrace: limits.minGrace,
       usdt: BSC.usdt,
       wbmb: BSC.wbmb,
       pricePolicy: ZeroAddress,
@@ -264,6 +287,7 @@ if (process.argv[1]?.endsWith("deploy-bsc.mjs")) {
     expectAddress: process.env.DEPLOYER_EXPECT,
     feeWallet: process.env.FEE_WALLET,
     broadcast: process.argv.includes("--broadcast"),
+    profile: process.argv.includes("--test-market") ? "test" : "main",
   }).catch((e) => {
     console.error("실패:", e.shortMessage || e.message);
     process.exit(1);

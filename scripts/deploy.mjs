@@ -114,6 +114,8 @@ export async function deployFixture(provider, { seed = false } = {}) {
     oracle.target,
     burner.target,
     500,
+    3600,
+    86400,
   ]);
   for (const address of addresses) {
     await (await usdt.mint(address, us(10000))).wait();
@@ -201,6 +203,8 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
     ZeroAddress,
     feeWallet,
     500,
+    3600,
+    86400,
   ]);
   for (const address of addresses) {
     await (await usdt.mint(address, us(10000))).wait();

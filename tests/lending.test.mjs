@@ -392,6 +392,8 @@ describe("P2P lending on a real local EVM", () => {
         f.oracle.target,
         f.burner.target,
         500,
+        3600,
+        86400,
       ]),
       /DECIMALS/,
     );
@@ -424,6 +426,8 @@ describe("P2P lending on a real local EVM", () => {
       f.oracle.target,
       burner.target,
       500,
+      3600,
+      86400,
     ]);
     await tx(token.mint(f.addresses[2], us(1000)));
     await tx(token.connect(f.lender).approve(lending.target, us(1000)));

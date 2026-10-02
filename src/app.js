@@ -64,7 +64,10 @@ let feePct = "5";
 const full = (n, d = 18) => formatUnits(n, d).replace(/\.0$/, "");
 const durationText = (seconds) => {
   const s = Number(seconds);
-  return s % 86400 === 0 ? `${s / 86400}일` : `${Math.round(s / 360) / 10}시간`;
+  if (s % 86400 === 0) return `${s / 86400}일`;
+  return s < 3600
+    ? `${Math.round(s / 60)}분`
+    : `${Math.round(s / 360) / 10}시간`;
 };
 const spenderLine = () =>
   `승인 대상 컨트랙트: ${contracts.lending.target} (토큰 사용 승인은 이 주소에만 합니다)`;

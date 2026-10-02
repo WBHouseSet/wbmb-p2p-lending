@@ -103,6 +103,8 @@ describe("oracle-free fixed-ratio market", () => {
       ZeroAddress,
       await addr(feeWallet),
       500,
+      3600,
+      86400,
     ]);
     for (const s of [borrower, lender, lender2]) {
       await tx(usdt.mint(await addr(s), us(10000)));
@@ -129,6 +131,8 @@ describe("oracle-free fixed-ratio market", () => {
         ZeroAddress,
         ZeroAddress,
         500,
+        3600,
+        86400,
       ]),
       /BAD_CONFIG/,
     );
@@ -140,6 +144,8 @@ describe("oracle-free fixed-ratio market", () => {
         await addr(lender),
         await addr(feeWallet),
         500,
+        3600,
+        86400,
       ]),
       /BAD_CONFIG/,
     );
@@ -303,7 +309,15 @@ describe("oracle-free fixed-ratio market", () => {
   });
 
   it("rejects a fee above 10% at deployment", async () => {
-    const args = (fee) => [usdt.target, wbmb.target, ZeroAddress, addr0, fee];
+    const args = (fee) => [
+      usdt.target,
+      wbmb.target,
+      ZeroAddress,
+      addr0,
+      fee,
+      3600,
+      86400,
+    ];
     await assert.rejects(
       deployContract("P2PLending", admin, args(1001)),
       /FEE_TOO_HIGH/,
@@ -351,5 +365,76 @@ describe("oracle-free fixed-ratio market", () => {
     );
     assert.equal(byLender.length, 1);
     assert.equal(byLender[0].args.id, b);
+  });
+
+  it("minimum duration and grace are fixed per deployment: a test market allows 30-minute loans, the standard one does not", async () => {
+    const expiry = (await now()) + 604800;
+    const short = { ...TERMS, duration: 1800, grace: 300 };
+    await tx(wbmb.connect(borrower).approve(lending.target, wb(1)));
+    await assert.rejects(
+      lending
+        .connect(borrower)
+        .createOffer(0, us(90), wb(1), us(10), expiry, short),
+      /BAD_TERM/,
+    );
+    assert.equal(await lending.minDuration(), 3600n);
+    assert.equal(await lending.minGrace(), 86400n);
+
+    const quick = await deployContract("P2PLending", admin, [
+      usdt.target,
+      wbmb.target,
+      ZeroAddress,
+      addr0,
+      500,
+      300,
+      300,
+    ]);
+    await tx(wbmb.connect(borrower).approve(quick.target, wb(1)));
+    await assert.rejects(
+      quick
+        .connect(borrower)
+        .createOffer(0, us(90), wb(1), us(10), expiry, {
+          ...short,
+          duration: 299,
+        }),
+      /BAD_TERM/,
+    );
+    await assert.rejects(
+      quick
+        .connect(borrower)
+        .createOffer(0, us(90), wb(1), us(10), expiry, {
+          ...short,
+          grace: 299,
+        }),
+      /ORACLE_FREE_TERMS/,
+    );
+    await tx(
+      quick
+        .connect(borrower)
+        .createOffer(0, us(90), wb(1), us(10), expiry, short),
+    );
+    await tx(usdt.connect(lender).approve(quick.target, us(90)));
+    await tx(
+      quick.connect(lender).fillOffer(1, us(90), wb(1), (await now()) + 300),
+    );
+    await advance(1800 + 290);
+    await assert.rejects(quick.settle(1), /NOT_OVERDUE/);
+    await advance(20);
+    await tx(quick.settle(1));
+    assert.equal(await quick.claimableWBMB(await addr(lender)), wb(1));
+
+    const bad = (d, g) =>
+      deployContract("P2PLending", admin, [
+        usdt.target,
+        wbmb.target,
+        ZeroAddress,
+        addr0,
+        500,
+        d,
+        g,
+      ]);
+    await assert.rejects(bad(59, 300), /BAD_LIMITS/);
+    await assert.rejects(bad(300, 59), /BAD_LIMITS/);
+    await assert.rejects(bad(300, 7 * 86400 + 1), /BAD_LIMITS/);
   });
 });

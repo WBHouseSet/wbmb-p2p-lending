@@ -64,6 +64,9 @@ contract P2PLending is ReentrancyGuard {
     IPricePolicy public immutable pricePolicy;
     address public immutable feeVault;
     uint256 public immutable feeBps;
+    /// Shortest loan and (oracle-free) shortest grace this deployment accepts, in seconds.
+    uint256 public immutable minDuration;
+    uint256 public immutable minGrace;
     uint256 public offerCount;
     uint256 public loanCount;
     mapping(uint256 => Offer) private offers;
@@ -89,12 +92,15 @@ contract P2PLending is ReentrancyGuard {
     event Claimed(address indexed account, address indexed token, uint256 amount);
     event FeesFlushed(uint256 amount);
 
-    constructor(address usdt_, address wbmb_, address policy_, address vault_, uint256 feeBps_) {
+    constructor(
+        address usdt_, address wbmb_, address policy_, address vault_, uint256 feeBps_, uint256 minDuration_, uint256 minGrace_
+    ) {
         require(usdt_ != wbmb_ && vault_ != address(0) && (policy_ == address(0) || policy_.code.length > 0), "BAD_CONFIG");
         require(IERC20Metadata(usdt_).decimals() == 18 && IERC20Metadata(wbmb_).decimals() == 8, "DECIMALS");
         require(feeBps_ <= 1000, "FEE_TOO_HIGH");
         usdt = IERC20(usdt_); wbmb = IERC20(wbmb_); pricePolicy = IPricePolicy(policy_);
-        feeVault = vault_; feeBps = feeBps_;
+        require(minDuration_ >= 1 minutes && minDuration_ <= 30 days && minGrace_ >= 1 minutes && minGrace_ <= 7 days, "BAD_LIMITS");
+        feeVault = vault_; feeBps = feeBps_; minDuration = minDuration_; minGrace = minGrace_;
     }
 
     function oracleFree() public view returns (bool) { return address(pricePolicy) == address(0); }
@@ -108,10 +114,10 @@ contract P2PLending is ReentrancyGuard {
     {
         require(total >= MIN_OFFER && total <= MAX_AMOUNT && minFill >= MIN_OFFER && minFill <= total, "BAD_AMOUNT");
         require(expiresAt > block.timestamp && expiresAt <= block.timestamp + 90 days, "BAD_EXPIRY");
-        require(t.aprBps <= BPS && t.duration >= 1 hours && t.duration <= YEAR && t.grace <= 7 days, "BAD_TERM");
+        require(t.aprBps <= BPS && t.duration >= minDuration && t.duration <= YEAR && t.grace <= 7 days, "BAD_TERM");
         bool fixedRatio = oracleFree();
-        // Without price liquidation a late borrower loses everything, so a full day of grace is mandatory.
-        if (fixedRatio) require(t.mode == Mode.MaturityOnlyAllCollateral && t.haircutBps == 0 && t.liquidationBps == 0 && t.grace >= 1 days, "ORACLE_FREE_TERMS");
+        // Without price liquidation a late borrower loses everything, so a minimum grace is mandatory.
+        if (fixedRatio) require(t.mode == Mode.MaturityOnlyAllCollateral && t.haircutBps == 0 && t.liquidationBps == 0 && t.grace >= minGrace, "ORACLE_FREE_TERMS");
         else require(t.haircutBps >= 100 && t.haircutBps <= 9000 && t.liquidationBps < BPS && BPS - t.haircutBps < t.liquidationBps, "BAD_MARGIN");
         // Borrow: collateral is escrowed now. Oracle-free Lend: collateral is what borrowers must post for the full offer.
         if (side == Side.Borrow || fixedRatio) require(collateral > 0 && collateral <= MAX_AMOUNT, "BAD_COLLATERAL");

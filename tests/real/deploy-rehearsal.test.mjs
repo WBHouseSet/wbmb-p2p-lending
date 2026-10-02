@@ -246,4 +246,53 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(r.broadcast, false);
     assert.equal(logs.join("\n").includes(phrase), false);
   });
+
+  it("the test profile deploys a separate market with 5-minute minimums and its own record", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wbmb-deploy-"));
+    await assert.rejects(
+      deployBsc({
+        rpcUrl: url,
+        secret: wallet.privateKey,
+        profile: "nope",
+        outDir: dir,
+        log,
+      }),
+      /profile/,
+    );
+    const r = await deployBsc({
+      rpcUrl: url,
+      secret: wallet.privateKey,
+      profile: "test",
+      broadcast: true,
+      outDir: dir,
+      confirmations: 1,
+      log,
+    });
+    assert.equal(fs.existsSync(path.join(dir, "bsc.json")), false);
+    const record = JSON.parse(
+      fs.readFileSync(path.join(dir, "bsc-test.json"), "utf8"),
+    );
+    assert.equal(record.profile, "test");
+    assert.deepEqual([record.minDuration, record.minGrace], [300, 300]);
+    const lending = new Contract(r.lending, artifact("P2PLending").abi, local);
+    assert.equal(await lending.minDuration(), 300n);
+    assert.equal(await lending.minGrace(), 300n);
+    // the main profile keeps the safe limits
+    const main = await deployBsc({
+      rpcUrl: url,
+      secret: wallet.privateKey,
+      broadcast: true,
+      outDir: dir,
+      confirmations: 1,
+      log,
+    });
+    const mainLending = new Contract(
+      main.lending,
+      artifact("P2PLending").abi,
+      local,
+    );
+    assert.equal(await mainLending.minDuration(), 3600n);
+    assert.equal(await mainLending.minGrace(), 86400n);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
 });
