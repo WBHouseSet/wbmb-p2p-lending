@@ -25,6 +25,11 @@ import {
   planRelay,
 } from "../src/council-relay.mjs";
 
+// How long the council API may take to answer before the run gives up.
+export const API_TIMEOUT_MS = 15_000;
+// How long to wait for the report transaction to be mined before giving up.
+export const CONFIRM_TIMEOUT_MS = 120_000;
+
 export async function relayCouncil({
   rpcUrl = BSC.rpcUrl,
   chainId = BSC.chainId,
@@ -34,6 +39,8 @@ export async function relayCouncil({
   index = 0,
   expectAddress,
   broadcast = false,
+  apiTimeoutMs = API_TIMEOUT_MS,
+  confirmTimeoutMs = CONFIRM_TIMEOUT_MS,
   fetchImpl = fetch,
   log = console.log,
 } = {}) {
@@ -66,10 +73,23 @@ export async function relayCouncil({
     );
     if (!(await oracle.isReporter(from)))
       throw new Error("이 지갑은 가격 컨트랙트의 보고자가 아닙니다: " + from);
-    const response = await fetchImpl(apiUrl, { cache: "no-store" });
+    let response, json;
+    try {
+      // The signal also covers reading the body, so a stalled answer cannot hang the run.
+      response = await fetchImpl(apiUrl, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(apiTimeoutMs),
+      });
+      if (response.ok) json = await response.json();
+    } catch (e) {
+      throw new Error(
+        `카운슬 가격 API가 응답하지 않았습니다. 아무것도 보내지 않았습니다. (${e?.message || e})`,
+        { cause: e },
+      );
+    }
     if (!response.ok)
       throw new Error(`카운슬 가격 API 응답 오류 (HTTP ${response.status})`);
-    const api = parseCouncilPrice(await response.json());
+    const api = parseCouncilPrice(json);
     const [
       block,
       policyId,
@@ -122,7 +142,16 @@ export async function relayCouncil({
     }
     const tx = await submitCouncilReport(oracle, plan.report, [signer]);
     log(`전송됨   ${tx.hash}`);
-    const receipt = await tx.wait();
+    let receipt;
+    try {
+      receipt = await tx.wait(1, confirmTimeoutMs);
+    } catch (e) {
+      if (e?.code !== "TIMEOUT") throw e;
+      throw new Error(
+        `거래를 보냈지만 제한 시간 안에 확인되지 않았습니다: ${tx.hash}. 다음 실행 전에 직접 확인하세요.`,
+        { cause: e },
+      );
+    }
     if (receipt.status !== 1) throw new Error("가격 보고 거래가 실패했습니다.");
     return {
       action: "submit",

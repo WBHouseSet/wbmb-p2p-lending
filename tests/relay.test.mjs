@@ -169,6 +169,55 @@ describe("relayCouncil against a local chain", () => {
     );
     assert.equal(await local.getTransactionCount(reporter.address), 0);
   });
+  it("ends with a Korean error when the API does not answer in time", async () => {
+    const before = await local.getTransactionCount(reporter.address);
+    const hangs = (url, { signal }) =>
+      new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason)),
+      );
+    await assert.rejects(
+      run({ broadcast: true, fetchImpl: hangs, apiTimeoutMs: 50 }),
+      /카운슬 가격 API가 응답하지 않았습니다/,
+    );
+    assert.equal(await local.getTransactionCount(reporter.address), before);
+  });
+  it("ends with a Korean error when the API request fails", async () => {
+    const before = await local.getTransactionCount(reporter.address);
+    await assert.rejects(
+      run({
+        broadcast: true,
+        fetchImpl: async () => {
+          throw new TypeError("fetch failed");
+        },
+      }),
+      /카운슬 가격 API가 응답하지 않았습니다.*fetch failed/,
+    );
+    assert.equal(await local.getTransactionCount(reporter.address), before);
+  });
+  it("reports a sent but unconfirmed transaction with its hash", async () => {
+    // A fresh policy keeps round 1 of the shared one for the broadcast test below.
+    const fresh = await deployContract("CouncilPricePolicy", admin, [
+      [reporter.address],
+      1,
+      COUNCIL_POLICY_ID,
+      6 * 86400,
+      3000,
+      43200,
+    ]);
+    await local.send("evm_setAutomine", [false]);
+    try {
+      await assert.rejects(
+        run({ broadcast: true, policy: fresh.target, confirmTimeoutMs: 300 }),
+        (e) =>
+          /확인되지 않았습니다/.test(e.message) &&
+          /0x[0-9a-f]{64}/.test(e.message),
+      );
+    } finally {
+      await local.send("evm_setAutomine", [true]);
+      await local.send("evm_mine", []);
+    }
+    assert.equal(await fresh.lastRoundId(), 1n);
+  });
   it("refuses a key that is not a reporter", async () => {
     await assert.rejects(
       run({ broadcast: true, secret: Wallet.createRandom().privateKey }),
