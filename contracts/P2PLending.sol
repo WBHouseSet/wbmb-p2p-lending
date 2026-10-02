@@ -275,8 +275,10 @@ contract P2PLending is ReentrancyGuard {
         bool ok;
         try pricePolicy.prices() returns (uint256, uint256 p) { price = p; ok = p > 0 && p <= 1e30; } catch {}
         if (!ok) {
-            // A dead price relay must not lock an overdue loan forever.
-            require(block.timestamp >= uint256(l.maturity) + l.terms.grace + staleSettleDelay, "STALE_PRICE");
+            // A dead price relay must not lock an overdue loan forever. The wait runs from the later of the loan
+            // deadline and the price expiry, so a short outage cannot hand a long-overdue borrower's surplus to the lender.
+            uint256 start = Math.max(uint256(l.maturity) + l.terms.grace, uint256(pricePolicy.validUntil()));
+            require(block.timestamp >= start + staleSettleDelay, "STALE_PRICE");
             return (l.collateral, 0, debt, 0);
         }
         uint256 threshold = Math.mulDiv(Math.mulDiv(l.collateral, price, WBMB_UNIT), l.terms.liquidationBps, BPS);

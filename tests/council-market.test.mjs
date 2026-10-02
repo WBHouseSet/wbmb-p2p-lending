@@ -175,6 +175,37 @@ describe("council-price market", () => {
     await conserved();
   });
 
+  it("a price that dies long after the deadline still makes the lender wait the full delay", async () => {
+    const id = await loan600();
+    // Keep the price alive well past maturity + grace + the stale delay (day 31 + 7).
+    for (let i = 0; i < 8; i++) {
+      await advance(5 * DAY);
+      await f.publishPrice(us(100));
+    }
+    assert(
+      (await now()) >
+        (await f.lending.getLoan(id)).maturity + BigInt(DAY + 7 * DAY),
+    );
+    const live = await f.lending.quoteSettlement(id);
+    assert.equal(live.toLender, wb(6.3));
+    assert(live.toBorrower > 0n);
+    // The price expires; the wait restarts from its expiry, not from the old deadline.
+    const expiry = Number(await f.oracle.validUntil());
+    await advance(expiry - (await now()) + 60);
+    await assert.rejects(f.lending.quoteSettlement(id), /STALE_PRICE/);
+    await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
+    await advance(expiry + 7 * DAY - 60 - (await now()));
+    await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
+    await advance(120);
+    const q = await f.lending.quoteSettlement(id);
+    assert.equal(q.toLender, wb(10));
+    assert.equal(q.toBorrower, 0n);
+    assert.equal(q.price, 0n);
+    await tx(f.lending.settle(id));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(10));
+    await conserved();
+  });
+
   it("a price that comes back after the delay is used instead of the escape", async () => {
     const id = await loan600();
     await advance(30 * DAY + DAY + 7 * DAY);
