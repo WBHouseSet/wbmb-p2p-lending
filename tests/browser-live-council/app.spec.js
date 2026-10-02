@@ -47,6 +47,17 @@ async function commit(page, done) {
   await page.locator("#confirm-submit").click();
   await expect(page.locator("#status")).toContainText(done, { timeout: 40000 });
 }
+// A raw call to the suite's local chain, for moving its clock.
+async function rpc(method, params = []) {
+  const response = await fetch(RPC, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+  });
+  const data = await response.json();
+  if (data.error) throw new Error(data.error.message);
+  return data.result;
+}
 
 test("live council page shows the relayed price and no demo controls", async ({
   page,
@@ -92,6 +103,56 @@ test("lender posts, borrower fills at the council price and tops up", async ({
   await borrower.locator('[data-topup-amount="1"]').fill("1");
   await borrower.locator('[data-loan="1"] [data-action="topup"]').click();
   await commit(borrower, "담보 추가 완료");
+});
+
+test("past maturity and grace the loan settles: the lender gets debt plus the bonus, the borrower the rest", async ({
+  browser,
+}) => {
+  const lender = await browser.newPage();
+  await wallet(lender, 2);
+  await open(lender);
+  await connect(lender);
+  await lender.locator("#open-offer").click();
+  await lender.locator('#offer-form [name="side"]').selectOption("1");
+  await lender.locator('#offer-form [name="total"]').fill("67.38");
+  await lender.locator('#offer-form [name="minFill"]').fill("10");
+  await lender.locator('#offer-form [name="apr"]').fill("0");
+  await lender.locator('#offer-form [name="duration"]').fill("1");
+  await lender.locator('#offer-form button[type="submit"]').click();
+  await commit(lender, "거래 게시 완료");
+  const borrower = await browser.newPage();
+  await wallet(borrower, 1);
+  await open(borrower);
+  await connect(borrower);
+  await borrower.locator('[data-tab="borrow"]').click();
+  await borrower.locator('[data-fill-amount="2"]').fill("67.38");
+  await borrower.locator('[data-offer="2"] [data-action="fill"]').click();
+  // 67.38 / (112.3 * 0.6) = 1 WBMB, liquidated at 67.38 / (1 * 0.8) = 84.225
+  await expect(borrower.locator("#confirm-body")).toContainText(
+    "배정 담보: 1 WBMB",
+  );
+  await expect(borrower.locator("#confirm-body")).toContainText(
+    "청산 가격: 84.225 USDT 이하",
+  );
+  await commit(borrower, "부분 체결 완료");
+  // One day to maturity, one day of grace. The relayed price stays valid for six days.
+  await rpc("evm_increaseTime", [2 * 86400 + 60]);
+  await rpc("evm_mine");
+  await borrower.locator("#refresh").click();
+  await expect(borrower.locator("#price-state")).toContainText("유효");
+  await borrower.locator('[data-tab="mine"]').click();
+  await borrower.locator('[data-loan="2"] [data-action="settle"]').click();
+  // No interest (APR 0): 67.38 * 1.05 / 112.3 = 0.63 WBMB to the lender, 0.37 back.
+  const body = borrower.locator("#confirm-body");
+  await expect(body).toContainText("대출자 귀속 0.63 WBMB");
+  await expect(body).toContainText("차입자 반환 0.37 WBMB");
+  await expect(body).toContainText("종료 부채 67.38 USDT");
+  await expect(body).toContainText("적용 가격 112.3 USDT · 보너스 5% 포함");
+  await commit(borrower, "WBMB 정산 완료");
+  await expect(borrower.locator(".claim-box")).toContainText("0.37 WBMB");
+  await lender.locator("#refresh").click();
+  await lender.locator('[data-tab="mine"]').click();
+  await expect(lender.locator(".claim-box")).toContainText("0.63 WBMB");
 });
 
 test("rejects a swapped oracle address", async ({ page }) => {

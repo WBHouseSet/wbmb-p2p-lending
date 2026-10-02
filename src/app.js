@@ -62,10 +62,31 @@ const fixed = () => config?.oracleFree === true;
 const council = () => config?.policy === "council";
 // Markets whose fees go to a plain fee wallet (no burner contract).
 const vault = () => fixed() || council();
+// The one set of terms the council page posts and lists. The contract accepts other margins
+// (any haircut from 1% to 90% with a liquidation line above 1 - haircut), so offers with other
+// terms can exist; the page keeps them off the market tabs and does not fill them.
+const COUNCIL_TERMS = {
+  haircutBps: 4000,
+  liquidationBps: 8000,
+  mode: 0,
+  grace: 86400,
+};
+const standardCouncilOffer = (o) =>
+  Object.entries(COUNCIL_TERMS).every(
+    ([key, value]) => Number(o.terms[key]) === value,
+  );
+// The same terms as the page words them.
+const councilLtv = () => percent(10000 - COUNCIL_TERMS.haircutBps);
+const councilLine = () => percent(COUNCIL_TERMS.liquidationBps);
+const councilGrace = () => durationText(COUNCIL_TERMS.grace);
 let bonusPct = "0";
+// False until the price contract has accepted its first report.
+let priceSet = true;
 let priceLive = true;
 let currentPrice = 0n;
 let staleDelay = "";
+// The market's shortest grace, read from the chain (council market only).
+let minGraceText = "";
 // Addresses and the RPC endpoint compiled into a live build. A live page only talks to exactly these.
 const PINNED = typeof __PINNED__ === "undefined" ? null : __PINNED__;
 let feePct = "5";
@@ -84,7 +105,7 @@ const liquidationPrice = (l) =>
   (l.collateral * BigInt(l.terms.liquidationBps));
 // How far the council price can still fall before liquidation, as the loan card shows it.
 const marginText = (l) => {
-  if (!priceLive) return "가격 만료";
+  if (!priceLive) return priceSet ? "가격 만료" : "가격 미등록";
   const liq = liquidationPrice(l);
   if (currentPrice <= liq) return "청산 대상";
   const pct = (Number(currentPrice - liq) / Number(currentPrice)) * 100;
@@ -153,7 +174,9 @@ function errorMessage(e) {
     STALE_PRICE: config?.demo
       ? "모의 가격이 만료됐습니다. 실험실에서 가격을 갱신하세요. 상환·담보 추가·수령은 계속 가능합니다."
       : "가격이 만료되어 지금은 체결·가격 정산을 할 수 없습니다. 상환·담보 추가·수령은 계속 가능합니다.",
-    BAD_GRACE: "이 시장은 유예 1일 이상인 조건만 게시할 수 있습니다.",
+    BAD_GRACE: minGraceText
+      ? `이 시장은 유예 ${minGraceText} 이상인 조건만 게시할 수 있습니다.`
+      : "이 시장이 정한 최소 유예보다 짧은 조건은 게시할 수 없습니다.",
     INSUFFICIENT_COLLATERAL:
       "현재 가격에서 담보가 부족합니다. 더 낮은 금액 또는 충분한 담보의 거래를 선택하세요.",
     NO_INTEREST_BUFFER: "만기 예상 이자까지 포함하면 담보 여유가 부족합니다.",
@@ -407,14 +430,18 @@ async function refresh() {
         contracts.oracle.validUntil(),
         contracts.oracle.confirmedAt(),
       ]);
-      priceLive = latest <= Number(validUntil);
+      // validUntil is 0 only until the first report: nothing has expired, there is no price yet.
+      priceSet = validUntil !== 0n;
+      priceLive = priceSet && latest <= Number(validUntil);
       const [opening] = priceLive ? await contracts.oracle.prices() : [current];
       currentPrice = current;
-      $("#week-price").textContent = fmt(opening);
-      $("#current-price").textContent = fmt(current);
-      $("#price-state").textContent = priceLive
-        ? `카운슬 확정 ${date(confirmedAt)} · 유효 ${date(validUntil)}까지`
-        : "가격 만료 · 신규 체결과 가격 정산 중단";
+      $("#week-price").textContent = priceSet ? fmt(opening) : "—";
+      $("#current-price").textContent = priceSet ? fmt(current) : "—";
+      $("#price-state").textContent = !priceSet
+        ? "가격 미등록 · 첫 가격이 올라온 뒤 체결할 수 있습니다"
+        : priceLive
+          ? `카운슬 확정 ${date(confirmedAt)} · 유효 ${date(validUntil)}까지`
+          : "가격 만료 · 신규 체결과 가격 정산 중단";
     } else if (!fixed()) {
       const [low, current, validUntil, windowEnd, round] = await Promise.all([
         contracts.oracle.weekLow(),
@@ -501,7 +528,9 @@ function offerCard(o) {
   const own = address?.toLowerCase() === o.maker.toLowerCase();
   const active = !o.closed && Number(o.expiresAt) > latest;
   const minimum = o.remaining < o.minFill ? o.remaining : o.minFill;
-  return `<article class="card" data-offer="${o.id}"><div class="card-top"><span class="badge ${o.side === 0 ? "neutral" : ""}">${o.side === 0 ? "빌리고 싶어요" : "빌려드려요"}</span><span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><h3>${fmt(o.remaining)} <small>USDT</small></h3><span class="sub">${active ? "남은 참여 가능 금액" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span><dl><div><dt>고정 연이율</dt><dd>${percent(o.terms.aprBps)}% APR</dd></div><div><dt>대출 기간</dt><dd>${durationText(o.terms.duration)}</dd></div><div><dt>최소 참여</dt><dd>${fmt(minimum)} USDT</dd></div>${fixed() ? `<div><dt>담보 비율</dt><dd>${ratioText(o)}</dd></div>` : `<div><dt>${council() ? "담보 여유" : "헤어컷"}</dt><dd>${percent(o.terms.haircutBps)}%</dd></div>`}</dl><div class="mode">${modeText(o.terms.mode)}<br>만기 후 유예 ${durationText(o.terms.grace)} · 게시 만료 ${date(o.expiresAt)}</div>${active && !own ? `<div class="input-row"><input data-fill-amount="${o.id}" aria-label="거래 ${o.id} 참여 금액" value="${formatUnits(minimum, 18)}" inputmode="decimal" /><button class="button primary" data-action="fill" data-id="${o.id}">${o.side === 0 ? "빌려주기" : "빌리기"}</button></div>` : ""}${own && !o.closed ? `<div class="row-actions"><button class="button outline small" data-action="close" data-id="${o.id}">미체결분 회수</button></div>` : ""}</article>`;
+  // Only reachable in "내 거래": the market tabs never list a non-standard council offer.
+  const odd = council() && !standardCouncilOffer(o);
+  return `<article class="card" data-offer="${o.id}"><div class="card-top"><span class="badge ${o.side === 0 ? "neutral" : ""}">${o.side === 0 ? "빌리고 싶어요" : "빌려드려요"}${odd ? " · 비표준 조건" : ""}</span><span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><h3>${fmt(o.remaining)} <small>USDT</small></h3><span class="sub">${active ? "남은 참여 가능 금액" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span><dl><div><dt>고정 연이율</dt><dd>${percent(o.terms.aprBps)}% APR</dd></div><div><dt>대출 기간</dt><dd>${durationText(o.terms.duration)}</dd></div><div><dt>최소 참여</dt><dd>${fmt(minimum)} USDT</dd></div>${fixed() ? `<div><dt>담보 비율</dt><dd>${ratioText(o)}</dd></div>` : `<div><dt>${council() ? "담보 여유" : "헤어컷"}</dt><dd>${percent(o.terms.haircutBps)}%</dd></div>${council() ? `<div><dt>청산선</dt><dd>${percent(o.terms.liquidationBps)}%</dd></div>` : ""}`}</dl><div class="mode">${modeText(o.terms.mode)}<br>만기 후 유예 ${durationText(o.terms.grace)} · 게시 만료 ${date(o.expiresAt)}${odd ? `<br>이 화면의 표준 조건(담보 여유 ${percent(COUNCIL_TERMS.haircutBps)}% · 청산선 ${councilLine()}% · 유예 ${councilGrace()})과 달라 시장 목록에 나오지 않고 이 화면에서 체결되지 않습니다.` : ""}</div>${active && !own ? `<div class="input-row"><input data-fill-amount="${o.id}" aria-label="거래 ${o.id} 참여 금액" value="${formatUnits(minimum, 18)}" inputmode="decimal" /><button class="button primary" data-action="fill" data-id="${o.id}">${o.side === 0 ? "빌려주기" : "빌리기"}</button></div>` : ""}${own && !o.closed ? `<div class="row-actions"><button class="button outline small" data-action="close" data-id="${o.id}">미체결분 회수</button></div>` : ""}</article>`;
 }
 function loanCard(l) {
   const isBorrower = address?.toLowerCase() === l.borrower.toLowerCase();
@@ -509,7 +538,7 @@ function loanCard(l) {
     l.status
   ];
   const due = l.maturity + BigInt(l.terms.grace);
-  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><h3>${fmt(l.debt, 18, 6)} <small>USDT</small></h3><span class="sub">${l.status === 1 ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span><dl><div><dt>배정 담보</dt><dd>${fmt(l.collateral, 8, 8)} WBMB</dd></div><div><dt>고정 연이율</dt><dd>${percent(l.terms.aprBps)}% APR</dd></div>${council() && l.status === 1 && Number(l.terms.mode) === 0 && l.collateral > 0n ? `<div><dt>청산 가격</dt><dd>${fmt(liquidationPrice(l))} USDT 이하</dd></div><div><dt>청산까지 여유</dt><dd>${marginText(l)}</dd></div>` : ""}</dl><div class="mode">${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}</div>${l.status === 1 && isBorrower ? `${fixed() ? "" : `<div class="input-row"><input data-topup-amount="${l.id}" aria-label="대출 ${l.id} 추가 담보" value="0.1" inputmode="decimal" /><button class="button outline small" data-action="topup" data-id="${l.id}">담보 추가</button></div>`}<div class="input-row"><input data-repay-amount="${l.id}" aria-label="대출 ${l.id} 상환 원금" value="${formatUnits(l.principal, 18)}" inputmode="decimal" /><button class="button primary small" data-action="repay" data-id="${l.id}">상환</button></div><div class="row-actions"><button class="text-button" data-action="interest" data-id="${l.id}">이자만 납부</button></div>` : ""}${l.status === 1 ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${l.status === 3 ? "USDT로 상환된 것이 아닙니다. 수령 가능한 WBMB는 위 잔액에서 확인하세요." : fixed() || (council() && Number(l.terms.mode) !== 0) ? `유예 종료(${date(due)})까지 전액 상환하지 않으면 남은 담보 전부가 대출자에게 넘어갑니다. 일부 상환으로는 담보가 풀리지 않습니다.` : council() ? `카운슬 가격이 청산 가격 이하로 내려가거나 유예 종료(${date(due)})까지 갚지 않으면, 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지는 돌려받습니다. 담보를 추가하면 청산 가격이 내려갑니다. ${staleNote()}` : "담보 추가는 만기 연장이 아닙니다. 체결된 원금은 대출자가 임의 회수할 수 없습니다."}</p></article>`;
+  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><h3>${fmt(l.debt, 18, 6)} <small>USDT</small></h3><span class="sub">${l.status === 1 ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span><dl><div><dt>배정 담보</dt><dd>${fmt(l.collateral, 8, 8)} WBMB</dd></div><div><dt>고정 연이율</dt><dd>${percent(l.terms.aprBps)}% APR</dd></div>${council() && l.status === 1 && Number(l.terms.mode) === 0 && l.collateral > 0n ? `<div><dt>청산 가격</dt><dd>${fmt(liquidationPrice(l))} USDT 이하</dd></div><div><dt>청산까지 여유</dt><dd>${marginText(l)}</dd></div>` : ""}</dl><div class="mode">${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}</div>${l.status === 1 && isBorrower ? `${fixed() ? "" : `<div class="input-row"><input data-topup-amount="${l.id}" aria-label="대출 ${l.id} 추가 담보" value="0.1" inputmode="decimal" /><button class="button outline small" data-action="topup" data-id="${l.id}">담보 추가</button></div>`}<div class="input-row"><input data-repay-amount="${l.id}" aria-label="대출 ${l.id} 상환 원금" value="${formatUnits(l.principal, 18)}" inputmode="decimal" /><button class="button primary small" data-action="repay" data-id="${l.id}">상환</button></div><div class="row-actions"><button class="text-button" data-action="interest" data-id="${l.id}">이자만 납부</button></div>` : ""}${l.status === 1 ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${l.status === 3 ? "USDT로 상환된 것이 아닙니다. 수령 가능한 WBMB는 위 잔액에서 확인하세요." : fixed() || (council() && Number(l.terms.mode) !== 0) ? `유예 종료(${date(due)})까지 전액 상환하지 않으면 남은 담보 전부가 대출자에게 넘어갑니다. 일부 상환으로는 담보가 풀리지 않습니다.` : council() ? `카운슬 가격이 청산 가격 이하로 내려가거나 유예 종료(${date(due)})까지 갚지 않으면, 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지는 차입자에게 돌아갑니다. 담보를 추가하면 청산 가격이 내려갑니다. ${staleNote()}` : "담보 추가는 만기 연장이 아닙니다. 체결된 원금은 대출자가 임의 회수할 수 없습니다."}</p></article>`;
 }
 async function render() {
   if (!contracts) return;
@@ -532,7 +561,11 @@ async function render() {
   if (tab === "borrow" || tab === "lend") {
     const side = tab === "borrow" ? 1 : 0;
     const filtered = offers.filter(
-      (o) => o.side === side && !o.closed && Number(o.expiresAt) > latest,
+      (o) =>
+        o.side === side &&
+        !o.closed &&
+        Number(o.expiresAt) > latest &&
+        (!council() || standardCouncilOffer(o)),
     );
     html =
       filtered.map(offerCard).join("") ||
@@ -598,10 +631,18 @@ async function handleAction(action, id) {
   }
   if (action === "fill") {
     // Before any amount check, so an empty field on an expired price still explains the real reason.
+    if (council() && !priceSet)
+      throw new Error(
+        "첫 카운슬 가격이 아직 등록되지 않아 체결할 수 없습니다. 가격이 올라온 뒤 다시 시도하세요.",
+      );
     if (council() && !priceLive)
       throw new Error("카운슬 가격이 만료되어 지금은 체결할 수 없습니다.");
     const input = amount($(`[data-fill-amount="${id}"]`).value),
       o = await contracts.lending.getOffer(id);
+    if (council() && !standardCouncilOffer(o))
+      throw new Error(
+        "이 게시글은 화면의 표준 조건과 달라 여기서 체결할 수 없습니다.",
+      );
     const collateral = await contracts.lending.quoteFill(id, input);
     const interest =
       (input * BigInt(o.terms.aprBps) * BigInt(o.terms.duration)) /
@@ -610,9 +651,20 @@ async function handleAction(action, id) {
     const lending_ = Number(o.side) === 0;
     const token = lending_ ? contracts.usdt : contracts.wbmb;
     const repayBy = latest + Number(o.terms.duration) + Number(o.terms.grace);
+    // In the council market a settled lender receives debt plus the bonus, never "the collateral",
+    // and the borrower must see where this very fill would be liquidated before confirming.
+    const lenderGets = council()
+      ? `상환되면 원금과 이자(USDT), 정산되면 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB(담보가 모자라면 담보 전부)`
+      : "상환되면 원금과 이자(USDT), 미상환이면 담보 WBMB";
+    const liquidationLine = council()
+      ? `\n청산선 ${percent(o.terms.liquidationBps)}% · 청산 가격: ${fmt(liquidationPrice({ debt: input, collateral, terms: o.terms }))} USDT 이하 (지금 카운슬 가격 ${fmt(currentPrice)} USDT · 이자가 쌓이면 청산 가격도 올라갑니다)`
+      : "";
+    const settlementLine = council()
+      ? `카운슬 가격이 청산 가격 이하로 내려가거나 상환 기한까지 갚지 않으면 정산됩니다. 정산되면 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다. 대출자는 USDT 대신 WBMB를 받습니다. ${staleNote()}`
+      : "담보 정산 시 대출자는 USDT 대신 WBMB를 받습니다.";
     await txAction(
       "부분 체결",
-      `${lending_ ? "USDT를 빌려줍니다" : "WBMB를 맡기고 USDT를 빌립니다"} · 게시글 #${id}\n내가 보내는 것: ${lending_ ? full(input) + " USDT" : full(collateral, 8) + " WBMB (담보)"}\n내가 받는 것: ${lending_ ? "상환되면 원금과 이자(USDT), 미상환이면 담보 WBMB" : full(input) + " USDT"}\n배정 담보: ${fmt(collateral, 8, 8)} WBMB\n담보 비율: ${ratioText({ total: input, collateralTotal: collateral })}\nAPR ${percent(o.terms.aprBps)}% · 기간 ${durationText(o.terms.duration)} · 유예 ${durationText(o.terms.grace)}\n상환 기한(유예 포함): ${date(repayBy)} 무렵\n만기까지 예상 이자 ${fmt(interest, 18, 8)} USDT (${feeWord()} 별도)\n${modeText(o.terms.mode)}\n담보 정산 시 대출자는 USDT 대신 WBMB를 받습니다.\n${spenderLine()}`,
+      `${lending_ ? "USDT를 빌려줍니다" : "WBMB를 맡기고 USDT를 빌립니다"} · 게시글 #${id}\n내가 보내는 것: ${lending_ ? full(input) + " USDT" : full(collateral, 8) + " WBMB (담보)"}\n내가 받는 것: ${lending_ ? lenderGets : full(input) + " USDT"}\n배정 담보: ${fmt(collateral, 8, 8)} WBMB\n담보 비율: ${ratioText({ total: input, collateralTotal: collateral })}${liquidationLine}\nAPR ${percent(o.terms.aprBps)}% · 기간 ${durationText(o.terms.duration)} · 유예 ${durationText(o.terms.grace)}\n상환 기한(유예 포함): ${date(repayBy)} 무렵\n만기까지 예상 이자 ${fmt(interest, 18, 8)} USDT (${feeWord()} 별도)\n${modeText(o.terms.mode)}\n${settlementLine}\n${spenderLine()}`,
       async (ctx) => {
         await ctx.approve(token, lending_ ? input : collateral);
         const block = await read.getBlock("latest");
@@ -792,7 +844,7 @@ function syncOfferForm() {
   $("#terms-note").textContent = fixed()
     ? `만기 유예 1일. 단리 APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 ${feePct}%가 별도 수수료입니다. 가격이 내려가도 청산되지 않고, 만기·유예 후 미상환이면 추가 담보를 포함한 남은 WBMB 전부가 대출자에게 넘어갑니다.`
     : council()
-      ? `카운슬 가격 기준으로 담보 가치의 60%까지 빌려줍니다. 부채가 담보 가치의 80% 이상이 되거나 만기·유예 1일 후 미상환이면 정산되어, 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지는 차입자에게 돌아갑니다. ${staleNote()} 단리 APR이며 지급 이자의 ${feePct}%가 별도 수수료입니다.`
+      ? `카운슬 가격 기준으로 담보 가치의 ${councilLtv()}%까지 빌려줍니다. 부채가 담보 가치의 ${councilLine()}% 이상이 되거나 만기·유예 ${councilGrace()} 후 미상환이면 정산되어, 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지는 차입자에게 돌아갑니다. ${staleNote()} 단리 APR이며 지급 이자의 ${feePct}%가 별도 수수료입니다.`
       : "체험 조건: 헤어컷 10% · 청산 기준 95% · 만기 유예 1일. 단리 APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 5%가 별도 소각 수수료입니다.";
 }
 form.elements.side.onchange = syncOfferForm;
@@ -811,7 +863,11 @@ form.onsubmit = async (e) => {
       minFill = amount(form.elements.minFill.value);
     const days = Number(form.elements.duration.value),
       expiry = Number(form.elements.expiry.value),
-      mode = fixed() ? 1 : council() ? 0 : Number(form.elements.mode.value);
+      mode = fixed()
+        ? 1
+        : council()
+          ? COUNCIL_TERMS.mode
+          : Number(form.elements.mode.value);
     if (
       !Number.isInteger(days) ||
       !Number.isInteger(expiry) ||
@@ -832,16 +888,20 @@ form.onsubmit = async (e) => {
       throw new Error("금액·담보·금리 범위를 확인하세요.");
     const terms = {
       aprBps: apr,
-      haircutBps: fixed() ? 0 : council() ? 4000 : 1000,
-      liquidationBps: fixed() ? 0 : council() ? 8000 : 9500,
+      haircutBps: fixed() ? 0 : council() ? COUNCIL_TERMS.haircutBps : 1000,
+      liquidationBps: fixed()
+        ? 0
+        : council()
+          ? COUNCIL_TERMS.liquidationBps
+          : 9500,
       duration: days * 86400,
-      grace: 86400,
+      grace: council() ? COUNCIL_TERMS.grace : 86400,
       mode,
     };
     $("#offer-dialog").close();
     await txAction(
       "거래 게시",
-      `${side === 0 ? "USDT 빌리기" : "USDT 빌려주기"} · 한도 ${fmt(total)} USDT\n최소 참여 ${fmt(minFill)} USDT · APR ${percent(apr)}% · ${days}일\n${modeText(mode)}\n내가 보내는 것: ${side === 0 ? full(collateral, 8) + " WBMB" : full(total) + " USDT"} (미체결 주문에 잠기며, 미체결분은 취소 후 수령할 수 있습니다)${needsCollateral ? `\n담보 비율: ${ratioText({ total, collateralTotal: collateral })} — 한도 전체 ${full(total)} USDT에 담보 ${full(collateral, 8)} WBMB. 숫자와 단위를 다시 확인하세요.` : ""}${side === 1 && fixed() ? "\n차입자는 이 비율대로만 담보를 맡기고 빌릴 수 있습니다. 담보를 너무 적게 적으면 누구나 즉시 전액을 빌려갈 수 있습니다." : ""}\n${council() ? `카운슬 가격이 청산 가격 이하로 내려가거나 만기 후 유예 1일이 지나면, 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지는 차입자에게 돌아갑니다. ${staleNote()}` : "만기 후 유예 1일이 지나면 미상환 대출의 담보는 대출자에게 넘어갑니다."}\n이자 지급액의 ${feePct}% 수수료가 별도로 부과됩니다.\n${spenderLine()}`,
+      `${side === 0 ? "USDT 빌리기" : "USDT 빌려주기"} · 한도 ${fmt(total)} USDT\n최소 참여 ${fmt(minFill)} USDT · APR ${percent(apr)}% · ${days}일\n${modeText(mode)}\n내가 보내는 것: ${side === 0 ? full(collateral, 8) + " WBMB" : full(total) + " USDT"} (미체결 주문에 잠기며, 미체결분은 취소 후 수령할 수 있습니다)${needsCollateral ? `\n담보 비율: ${ratioText({ total, collateralTotal: collateral })} — 한도 전체 ${full(total)} USDT에 담보 ${full(collateral, 8)} WBMB. 숫자와 단위를 다시 확인하세요.` : ""}${side === 1 && fixed() ? "\n차입자는 이 비율대로만 담보를 맡기고 빌릴 수 있습니다. 담보를 너무 적게 적으면 누구나 즉시 전액을 빌려갈 수 있습니다." : ""}\n${council() ? `카운슬 가격이 청산 가격 이하로 내려가거나 만기 후 유예 ${councilGrace()}이 지나면, 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지는 차입자에게 돌아갑니다. ${staleNote()}` : "만기 후 유예 1일이 지나면 미상환 대출의 담보는 대출자에게 넘어갑니다."}\n이자 지급액의 ${feePct}% 수수료가 별도로 부과됩니다.\n${spenderLine()}`,
       async (ctx) => {
         await ctx.approve(
           side === 0 ? contracts.wbmb : contracts.usdt,
@@ -1092,6 +1152,7 @@ async function init() {
     if (council()) {
       bonusPct = percent(await contracts.lending.liquidationBonusBps());
       staleDelay = durationText(await contracts.lending.staleSettleDelay());
+      minGraceText = durationText(await contracts.lending.minGrace());
       $("#week-label").textContent = "체결 기준가";
       $("#current-label").textContent = "카운슬 가격";
       $("#advance-week").hidden = false;
