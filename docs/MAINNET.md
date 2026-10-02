@@ -157,6 +157,8 @@ RELAY_KEY_FILE=/경로/중계키 npm run relay:council -- --test-market --broadc
 - **배포가 끝나면 웹 파일을 만들기 전에 중계 드라이런부터 실행한다**(위 명령의 `--broadcast` 없는 줄). 드라이런은 중계 키의 지갑이 가격 컨트랙트의 보고자인지 확인하고, 아니면 `이 지갑은 가격 컨트랙트의 보고자가 아닙니다`로 끝난다. `REPORTER`를 맞게 넣었는지 확인하는 수단은 이것뿐이다. 여기서 실패하면 그 시장은 쓸 수 없으니 화면을 만들지 말고 새로 배포한다.
 - 웹 파일 생성(전송 없음): `npm run build:live:council` 은 `deployments/bsc-council.json` 으로 `dist-live-council/` 을 만든다. 테스트 시장은 `RECORD=deployments/bsc-council-test.json OUT_DIR=dist-live-council-test node scripts/build-live.mjs`. 빌드에는 시장 종류·시장 주소·가격 컨트랙트 주소·RPC 주소가 박힌다. 다른 시장 종류나 다른 가격 컨트랙트, 다른 RPC 주소를 가리키는 `deployment.json` 이면 화면이 열리지 않는다(RPC 주소를 바꾸려면 4절처럼 다시 빌드한다).
 
+- **QR 연결(WalletConnect).** 빌드할 때 `WALLETCONNECT_PROJECT_ID=<프로젝트 ID>` 를 주면 화면에 `QR로 연결` 버튼이 생긴다(주지 않으면 버튼이 없고 브라우저 지갑만 쓴다). 프로젝트 ID는 `cloud.reown.com`(WalletConnect 운영사)에서 무료로 만든다. 비밀 값이 아니며 번들에 그대로 들어간다. 버튼을 누르면 화면이 QR 코드를 띄우고, 트러스트 월렛 같은 휴대폰 지갑에서 찍으면 연결된다. 이후 모든 거래 승인은 휴대폰에서 한다. 연결은 WalletConnect 중계 서버를 거치므로 그 서버가 멈추면 QR 연결만 안 된다(자금과 무관). 실제 프로젝트 ID로 휴대폰 지갑과 연결하는 것은 자동 시험에 없다. 배포 전에 손으로 한 번 확인한다.
+
 **첫 가격이 올라가기 전에는 이 시장에서 어떤 게시도 체결되지 않는다.** 가격 컨트랙트에 보고서가 없으면 가격 조회가 실패하기 때문이다. 이 동안 화면은 가격 칸에 숫자 대신 `가격 미등록`을 보여 주고 체결을 막는다. 배포 직후 드라이런이 통과하면 곧바로 중계를 한 번 `--broadcast`로 실행한다.
 
 ### 8.3 중계 봇 운영

@@ -33,7 +33,13 @@ fs.writeFileSync(
 // deployment.json that differs. Changing the endpoint therefore means building again.
 await build({
   publicDir,
-  define: { __PINNED__: JSON.stringify(livePinned(record, web.rpcUrl)) },
+  define: {
+    __PINNED__: JSON.stringify(livePinned(record, web.rpcUrl)),
+    // QR (WalletConnect) connection is offered only when a project id is given at build time.
+    __WC_PROJECT_ID__: JSON.stringify(
+      process.env.WALLETCONNECT_PROJECT_ID || "",
+    ),
+  },
   build: { outDir, emptyOutDir: true },
 });
 console.log(

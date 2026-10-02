@@ -25,6 +25,7 @@
           aria-label="설치된 지갑 선택"
           hidden
         ></select>
+        <button id="connect-qr" class="button outline" hidden>QR로 연결</button>
         <button id="connect" class="button outline">지갑 연결</button>
       </div>
     </header>
@@ -221,6 +222,31 @@
         </p>
         <button class="button primary full" type="submit">조건 확인하기</button>
       </form>
+    </dialog>
+    <dialog id="qr-dialog">
+      <div class="qr-box">
+        <h2>휴대폰 지갑으로 연결</h2>
+        <p class="note">
+          트러스트 월렛 같은 지갑 앱에서 WalletConnect(QR 스캔)를 열고 아래
+          코드를 찍으세요. 네트워크는 BNB Smart Chain 이어야 합니다.
+        </p>
+        <img id="qr-image" alt="지갑 연결용 QR 코드" width="280" height="280" />
+        <div class="row-actions">
+          <a
+            id="qr-open"
+            class="button outline small"
+            target="_blank"
+            rel="noopener"
+            >이 휴대폰의 트러스트 월렛에서 열기</a
+          >
+          <button id="qr-copy" class="button outline small" type="button">
+            연결 코드 복사
+          </button>
+          <button id="qr-cancel" class="button outline small" type="button">
+            취소
+          </button>
+        </div>
+      </div>
     </dialog>
     <dialog id="confirm-dialog">
       <div class="dialog-head"><h2 id="confirm-title">거래 확인</h2></div>

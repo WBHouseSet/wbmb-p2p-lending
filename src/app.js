@@ -89,6 +89,9 @@ let staleDelay = "";
 let minGraceText = "";
 // Addresses and the RPC endpoint compiled into a live build. A live page only talks to exactly these.
 const PINNED = typeof __PINNED__ === "undefined" ? null : __PINNED__;
+// WalletConnect project id, compiled into a live build that offers QR connection ("" otherwise).
+const WC_PROJECT_ID =
+  typeof __WC_PROJECT_ID__ === "undefined" ? "" : __WC_PROJECT_ID__;
 let feePct = "5";
 // Exact amount with no rounding, for what the user is about to sign.
 const full = (n, d = 18) => formatUnits(n, d).replace(/\.0$/, "");
@@ -295,14 +298,10 @@ function confirm(title, message) {
   });
 }
 function invalidateWallet() {
-  if (wallet?.removeListener) {
-    wallet.removeListener("accountsChanged", invalidateWallet);
-    wallet.removeListener("chainChanged", invalidateWallet);
-  }
+  dropWallet();
   revision++;
   signer = null;
   address = null;
-  wallet = null;
   $("#demo-account").value = "";
   $("#wallet-panel").hidden = true;
   $("#connect").textContent = "지갑 연결";
@@ -382,17 +381,99 @@ async function connectWallet() {
       });
     }
   }
-  if (wallet?.removeListener) {
-    wallet.removeListener("accountsChanged", invalidateWallet);
-    wallet.removeListener("chainChanged", invalidateWallet);
-  }
+  await attachWallet(selected, "연결된 지갑");
+}
+// Makes an EIP-1193 provider the page's wallet, whichever way it was connected.
+async function attachWallet(selected, label) {
+  dropWallet();
   wallet = selected;
   selected.on?.("accountsChanged", invalidateWallet);
   selected.on?.("chainChanged", invalidateWallet);
+  selected.on?.("disconnect", invalidateWallet);
   const provider = new BrowserProvider(selected, "any");
   provider.pollingInterval = config.demo ? 100 : 3000;
   $("#demo-account").value = "";
-  await useSigner(await provider.getSigner(), "연결된 지갑");
+  await useSigner(await provider.getSigner(), label);
+}
+// Stops listening to the current wallet; a WalletConnect session is ended as well.
+function dropWallet() {
+  if (!wallet) return;
+  wallet.removeListener?.("accountsChanged", invalidateWallet);
+  wallet.removeListener?.("chainChanged", invalidateWallet);
+  wallet.removeListener?.("disconnect", invalidateWallet);
+  if (wallet.isWalletConnect) wallet.disconnect?.().catch(() => {});
+  wallet = null;
+}
+// QR connection for a phone wallet (WalletConnect). The page shows the pairing code itself;
+// the wallet app scans it, and every transaction is then approved on the phone.
+async function connectByQr() {
+  if (busy) return;
+  status("QR 연결을 준비하는 중입니다…");
+  const [{ EthereumProvider }, QR] = await Promise.all([
+    import("@walletconnect/ethereum-provider"),
+    import("qrcode"),
+  ]);
+  // Rejects when the WalletConnect service does not answer, instead of waiting forever.
+  const within = (promise, what) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `QR 연결 서버가 응답하지 않습니다 (${what}). 잠시 뒤 다시 시도하세요.`,
+              ),
+            ),
+          20000,
+        ),
+      ),
+    ]);
+  const initializing = EthereumProvider.init({
+    projectId: WC_PROJECT_ID,
+    optionalChains: [Number(config.chainId)],
+    rpcMap: { [Number(config.chainId)]: config.rpcUrl },
+    showQrModal: false,
+    metadata: {
+      name: "WBMB Commons",
+      description: "WBMB 담보 P2P 대출",
+      url: location.origin,
+      icons: [],
+    },
+  });
+  const provider = await within(initializing, "준비");
+  const dialog = $("#qr-dialog");
+  const shown = new Promise((resolve) => provider.once("display_uri", resolve));
+  provider.on("display_uri", async (uri) => {
+    $("#qr-image").src = await QR.toDataURL(uri, { margin: 1, width: 280 });
+    // On a phone the same pairing code opens the wallet app directly.
+    $("#qr-open").href =
+      "https://link.trustwallet.com/wc?uri=" + encodeURIComponent(uri);
+    $("#qr-copy").onclick = () =>
+      navigator.clipboard
+        ?.writeText(uri)
+        .then(() => ($("#qr-copy").textContent = "복사됨"));
+    if (!dialog.open) dialog.showModal();
+  });
+  // Closing the dialog abandons the pairing.
+  const closed = new Promise((_, reject) => {
+    dialog.onclose = () => {
+      if (!provider.session) reject(new Error("QR 연결을 취소했습니다."));
+    };
+  });
+  try {
+    // A session left over from an earlier visit is replaced, so the QR is always fresh.
+    if (provider.session) await provider.disconnect();
+    const connecting = provider.connect();
+    connecting.catch(() => {}); // reported through the races below
+    await within(Promise.race([shown, connecting]), "연결 코드");
+    await Promise.race([connecting, closed]);
+  } finally {
+    dialog.onclose = null;
+    if (dialog.open) dialog.close();
+  }
+  provider.isWalletConnect = true;
+  await attachWallet(provider, "연결된 지갑 (QR)");
 }
 async function txAction(title, message, action) {
   if (busy) return;
@@ -833,6 +914,9 @@ document.querySelectorAll("[data-tab]").forEach((button) =>
 );
 $("#connect").onclick = () =>
   connectWallet().catch((e) => status(errorMessage(e), "error"));
+$("#connect-qr").onclick = () =>
+  connectByQr().catch((e) => status(errorMessage(e), "error"));
+$("#qr-cancel").onclick = () => $("#qr-dialog").close();
 $("#demo-account").onchange = async (e) => {
   if (!e.target.value) {
     invalidateWallet();
@@ -847,11 +931,7 @@ $("#demo-account").onchange = async (e) => {
       throw new Error("체험 지갑은 localhost에서만 사용할 수 있습니다.");
     await validateChain();
     await read.send("hardhat_metadata", []);
-    if (wallet?.removeListener) {
-      wallet.removeListener("accountsChanged", invalidateWallet);
-      wallet.removeListener("chainChanged", invalidateWallet);
-      wallet = null;
-    }
+    dropWallet();
     const i = Number(e.target.value);
     await useSigner(
       await read.getSigner(config.demoAccounts[i - 1]),
@@ -1225,6 +1305,7 @@ async function init() {
           `<option value="${i + 1}">체험 ${i + 1} · ${esc(short(a))}</option>`,
       )
       .join("");
+  $("#connect-qr").hidden = config.demo || !WC_PROJECT_ID;
   if (window.ethereum && !wallets.some((w) => w.provider === window.ethereum))
     wallets.push({
       info: { name: "브라우저 지갑" },

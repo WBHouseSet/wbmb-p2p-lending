@@ -850,3 +850,26 @@ dialog::backdrop {
   color: var(--tone);
   font-weight: 650;
 }
+
+.qr-box {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  text-align: center;
+  max-width: 340px;
+}
+.qr-box h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.qr-box img {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+.qr-box .row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
