@@ -179,7 +179,7 @@ export async function runCouncilLiveTest({
         );
         return { settled: false, secondsLeft: left };
       }
-      // Without a price the only settlement left is the one that hands over ALL collateral.
+      // Without a live price the only settlement left is the delayed one at the last price; this check is about the live one.
       if (!priced)
         throw new Error(
           "가격이 만료돼 가격으로 정산할 수 없습니다. 먼저 중계를 실행해 가격을 되살리세요 (npm run relay:council -- --test-market --broadcast). 아무것도 전송하지 않았습니다.",

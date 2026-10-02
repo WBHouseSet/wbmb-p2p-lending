@@ -85,6 +85,13 @@ USDT 대출원금은 이미 차입자에게 지급됐으므로 보유 잔액에 
 
 미상환·담보가치 하락 때 **부채에 보너스 10%를 더한 만큼의 WBMB만** 대출자에게 주고 나머지 담보는 차입자에게 돌려주는 세 번째 시장이다. 가격은 모빅 카운슬 가격이고, 사람이 돌리는 중계 봇이 그 값을 `CouncilPricePolicy`에 옮겨 적는다. 설계와 근거는 `docs/superpowers/specs/2026-10-02-council-price-liquidation-design.md`, 운영 방법은 [MAINNET.md](MAINNET.md) 8절. 아직 배포하지 않았다.
 
+> 2026-10-02 사용자 변경 (이 절의 위 설명보다 우선한다):
+>
+> - **가격 중단 대비.** 대기 시간이 지나면 담보 전부를 주는 대신 `pricePolicy.current()`(마지막으로 받아들인 가격, `IPricePolicy`에 추가)로 평소와 같은 식으로 정산한다. 연체된 대출만 해당한다. 마지막 가격이 0이거나 1e30을 넘거나 읽기가 실패할 때만 담보 전부가 대출자에게 간다(`CouncilPricePolicy`에서는 일어나지 않는다).
+> - **중계 봇.** 한도를 넘는 변동을 거부하지 않고, 실행마다 한도만큼 한 단계 옮긴다(`minInterval`마다 한 번). `--step`은 API 확정 시각이 체인 값보다 과거일 때의 거부만 푼다.
+> - **배포 값.** `minInterval` 24시간(하루 최대 30%), `liquidationBonusBps` 1000, 화면 표준 조건 담보 여유 50%·청산선 70%.
+> - **화면.** 표준 조건은 카드마다 반복하지 않고 목록 위 `#market-terms`와 게시 양식에 한 번 적는다(`councilTermsHtml`). 대출 카드의 청산 가격은 별도 블록(`liquidationBlock`)으로, 소수 둘째 자리에서 올림해 보여 준다.
+
 ### CouncilPricePolicy
 
 `IPricePolicy`를 구현한다. `SignedPricePolicy`의 EIP-712 서명 검증과 순차 round 방식을 가져오고 7일 구간·두 소스 비교는 뺐다. 보고서는 `policyId, roundId, price, confirmedAt, validUntil`이고 `price`는 WBMB 1개당 USDT 기본 단위(18 decimals)다. 보고자·임계값·`policyId`·`maxAge`·`maxChangeBps`·`minInterval`은 생성자에서 고정되고 변경 함수가 없다. 제출은 누구나 할 수 있다. `IPricePolicy`에는 `validUntil()`이 추가됐다(시장이 가격 중단 대기 시간의 기준 시각으로 읽는다).

@@ -10,7 +10,7 @@ export const BSC = {
   council: {
     maxAge: 6 * 86400, // the council has gone 4 days between updates
     maxChangeBps: 3000, // largest single council move seen: +18.5%
-    minInterval: 43200,
+    minInterval: 86400, // with maxChangeBps: at most 30% per day
     liquidationBonusBps: 1000, // lender receives debt + 10% in WBMB at settlement
     staleSettleDelay: 7 * 86400,
   },

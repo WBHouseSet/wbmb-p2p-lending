@@ -6,9 +6,10 @@
 //   Test market:               add --test-market
 //   Operator only:             add --step (never on the timer; see docs/MAINNET.md 8.3)
 //
-// --step is for the case the timer refuses: the council price is further from the on-chain
-// price than the contract accepts in one report. Each run then moves the on-chain price one
-// maximum step toward it. The price sent is not a council price; the operator vouches for it.
+// When the council price is further from the on-chain price than the contract accepts in one
+// report, each run moves the on-chain price one maximum step toward it (at most once per
+// minInterval). Such an intermediate price is not a council price.
+// --step is for the one case the timer still refuses: the API's confirmation time went backwards.
 //
 // For a mnemonic, RELAY_INDEX picks the wallet and RELAY_EXPECT must be that wallet's address.
 // The key is read at run time, never printed, never written anywhere.
@@ -146,7 +147,7 @@ export async function relayCouncil({
     );
     if (stepped)
       log(
-        `단계 이동 한도 ${Number(maxChangeBps) / 100}% 만큼만 옮깁니다. 이 가격은 카운슬 확정 가격이 아닙니다. 운영자가 보증하는 중간 값입니다.`,
+        `단계 이동 한도 ${Number(maxChangeBps) / 100}% 만큼만 옮깁니다. 이 가격은 카운슬 확정 가격이 아닙니다. 중간 값입니다.`,
       );
     if (!broadcast) {
       log("--broadcast 가 없어 전송하지 않았습니다.");

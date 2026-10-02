@@ -109,13 +109,10 @@ async function commit(page, done) {
   await expect(page.locator("#status")).toContainText(done);
   await expect(page.locator("#confirm-dialog")).not.toBeVisible();
 }
-// The dd next to a loan card's dt label.
-const cell = (page, loan, label) =>
-  page
-    .locator(`[data-loan="${loan}"] dl > div`)
-    .filter({ hasText: label })
-    .locator("dd");
-// The same for an offer card.
+// A loan card's liquidation block: its price ("price") or how far the price is from it ("margin").
+const liq = (page, loan, part) =>
+  page.locator(`[data-loan="${loan}"] [data-liq-${part}]`);
+// The dd next to an offer card's dt label.
 const offerCell = (page, offer, label) =>
   page
     .locator(`[data-offer="${offer}"] dl > div`)
@@ -143,10 +140,15 @@ test("council market shows the council price, a fee tab and the fixed margins", 
     "수수료 이자의 5%",
   );
   await page.locator('[data-tab="borrow"]').click();
-  await expect(page.locator('[data-offer="2"]')).toContainText("담보 여유");
-  await expect(page.locator('[data-offer="2"]')).toContainText("50%");
-  await expect(offerCell(page, 2, "담보 여유")).toHaveText("50%");
-  await expect(offerCell(page, 2, "청산선")).toHaveText("70%");
+  // The terms every listed offer shares are stated once, above the cards, not on each card.
+  const terms = page.locator("#market-terms");
+  await expect(terms).toContainText("담보 가치의 50%까지");
+  await expect(terms).toContainText("빚이 담보 가치의 70%에 닿으면");
+  await expect(terms).toContainText("약 28.6% 내릴 때");
+  await expect(terms).toContainText("대출자는 빚 + 10%어치의 WBMB");
+  await expect(terms).toContainText("만기 + 유예 1일");
+  await expect(terms).toContainText("이자의 5%");
+  await expect(page.locator('[data-offer="2"]')).not.toContainText("담보 여유");
   await expect(page.locator('[data-offer="2"]')).not.toContainText(
     "비표준 조건",
   );
@@ -190,7 +192,7 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   // 700 / (14 WBMB * 0.7) = 71.43, and settlement pays the lender the debt plus the on-chain bonus.
   await expect(page.locator("#confirm-body")).toContainText("청산선 70%");
   await expect(page.locator("#confirm-body")).toContainText(
-    /청산 가격: 71\.428\d USDT 이하/,
+    "청산 가격: 71.43 USDT 이하",
   );
   await expect(page.locator("#confirm-body")).toContainText(
     "부채에 보너스 10%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다",
@@ -204,8 +206,9 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   // debt 700 / (14 WBMB * 0.7) = 71.43
   // Fill happens at price 100, so the loan can lose 28.6% of the price before liquidation.
   // The seeded offer charges 10% APR, so a few seconds of interest may move the last digits.
-  await expect(cell(page, 1, "청산 가격")).toHaveText(/^71\.4\d* USDT 이하$/);
-  await expect(cell(page, 1, "청산까지 여유")).toHaveText(/^28\.[56]%$/);
+  await expect(liq(page, 1, "price")).toHaveText("71.43 USDT");
+  await expect(liq(page, 1, "margin")).toHaveText(/^28\.[56]% 더 내리면 청산$/);
+  await expect(page.locator('[data-loan="1"] .liq')).toHaveClass(/safe/);
   await setPrice(page, 70);
   await page.locator('[data-topup-amount="1"]').fill("1");
   await page.locator('[data-loan="1"] [data-action="topup"]').click();
@@ -215,7 +218,8 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
     "가격 청산 조건에 해당하지 않습니다",
   );
   await setPrice(page, 55);
-  await expect(cell(page, 1, "청산까지 여유")).toHaveText("청산 대상");
+  await expect(liq(page, 1, "margin")).toHaveText("청산 대상");
+  await expect(page.locator('[data-loan="1"] .liq')).toHaveClass(/hit/);
   await page.locator('[data-loan="1"] [data-action="settle"]').click();
   // 700 * 1.1 / 55 = 14 WBMB to the lender, 1 of the 15 back to the borrower
   // The seeded offer charges 10% APR, so a few seconds of interest may show in the last digits.
@@ -244,14 +248,12 @@ test("posting a lend offer uses the council margins, then a fill gets the 70% li
   await expect(page.locator("#terms-note")).toContainText("10%");
   // The stale-price rule is read from the contract (7 days on the local market).
   await expect(page.locator("#terms-note")).toContainText(
-    "가격 갱신이 끊긴 채로 유예 종료와 가격 만료 뒤 각각 7일이 지나면 담보 전부가 대출자에게 갑니다.",
+    "가격 갱신이 끊긴 채로 유예 종료와 가격 만료 뒤 각각 7일이 지나면 마지막 가격으로 정산됩니다.",
   );
   await page.locator('#offer-form button[type="submit"]').click();
   await commit(page, "거래 게시 완료");
   await account(page, 1);
   await page.locator('[data-tab="borrow"]').click();
-  await expect(page.locator('[data-offer="3"]')).toContainText("담보 여유");
-  await expect(page.locator('[data-offer="3"]')).toContainText("50%");
   await page.locator('[data-fill-amount="3"]').fill("90");
   await page.locator('[data-offer="3"] [data-action="fill"]').click();
   // 90 USDT at 50% margin and price 100 needs 1.8 WBMB.
@@ -261,9 +263,9 @@ test("posting a lend offer uses the council margins, then a fill gets the 70% li
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();
   // The posted terms were 50% margin / 70% liquidation: 90 / (1.8 * 0.7) = 71.43.
-  await expect(cell(page, 2, "청산 가격")).toHaveText(/^71\.4\d* USDT 이하$/);
-  await expect(page.locator('[data-loan="2"]')).toContainText(
-    "가격 하락 / 만기 미상환 · 초과담보 반환",
+  await expect(liq(page, 2, "price")).toHaveText("71.43 USDT");
+  await expect(page.locator('[data-loan="2"] .mode')).toContainText(
+    "갚는 기한",
   );
 });
 
@@ -280,7 +282,7 @@ test("an expired council price blocks new fills and settlement and says why", as
   await expect(page.locator("#status")).toContainText("7일이 경과");
   await expect(page.locator("#price-state")).toContainText("가격 만료");
   await page.locator('[data-tab="mine"]').click();
-  await expect(cell(page, 3, "청산까지 여유")).toHaveText("가격 만료");
+  await expect(liq(page, 3, "margin")).toHaveText("가격 만료");
   // Settle stays reachable (the stale-price escape uses it); the contract refuses and the page says why.
   await page.locator('[data-loan="3"] [data-action="settle"]').click();
   await expect(page.locator("#status")).toContainText("가격이 만료");

@@ -762,3 +762,91 @@ dialog::backdrop {
   background: #7a1f1f;
   color: #fff;
 }
+
+.market-terms {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin: 0 0 22px;
+}
+.terms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px 22px;
+  margin: 0;
+}
+.terms dt {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+.terms dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.55;
+}
+.terms-foot {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 14px 0 0;
+}
+.note .terms {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.liq {
+  --tone: var(--green);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--tone);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+  background: #fafcfa;
+}
+.liq.watch {
+  --tone: #c98a1b;
+}
+.liq.near,
+.liq.hit {
+  --tone: #c0392b;
+}
+.liq.off {
+  --tone: #9aa59d;
+}
+.liq-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.liq-head span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.liq-head strong {
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+}
+.liq-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: #e6ebe6;
+  margin: 10px 0 8px;
+  overflow: hidden;
+}
+.liq-bar i {
+  display: block;
+  height: 100%;
+  background: var(--tone);
+}
+.liq-foot {
+  font-size: 11px;
+  color: var(--muted);
+}
+.liq-foot b {
+  color: var(--tone);
+  font-weight: 650;
+}

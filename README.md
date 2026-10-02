@@ -18,7 +18,7 @@ npm run deploy:bsc               # 예상 비용만 계산 (전송 없음)
 MARKET=fixed npm run dev         # 같은 시장을 모의 토큰으로 로컬 체험
 MARKET=council npm run dev       # 카운슬 가격으로 청산하는 시장을 모의 토큰으로 로컬 체험
 npm run relay:council            # 카운슬 가격 중계 봇: 플래그 없이는 출력만, --broadcast 일 때만 BNB를 쓰고 전송
-                                 # (한도를 넘는 변동은 사람이 --step 으로: docs/MAINNET.md 8.3)
+                                 # (한도를 넘는 변동은 하루 30%씩 자동으로 따라감: docs/MAINNET.md 8.3)
 npm run build:live:council       # deployments/bsc-council.json 으로 실전 웹 파일 생성 (전송 없음)
 ```
 

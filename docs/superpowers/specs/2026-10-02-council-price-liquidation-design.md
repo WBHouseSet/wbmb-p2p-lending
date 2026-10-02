@@ -39,15 +39,15 @@
 
 `submit` 거부 조건:
 
-| 에러 | 조건 |
-|---|---|
-| `BAD_POLICY` | 정책 ID 불일치 |
-| `ROUND_GAP` | roundId가 직전 + 1이 아님 |
-| `BAD_VALIDITY` | 유효기한이 지났거나 지금 + `maxAge` 초과, `confirmedAt`이 미래이거나 직전 값보다 과거 |
-| `BAD_PRICE` | 0 또는 1e30 초과 |
-| `PRICE_JUMP` | 직전 가격 대비 변동이 `maxChangeBps` 초과 (첫 보고서는 제외) |
-| `TOO_SOON` | 가격이 바뀌는 보고서인데 직전 가격 변경 후 `minInterval` 미경과 |
-| `NOT_ENOUGH_SIGNATURES`, `BAD_SIGNER` | 기존과 같음 |
+| 에러                                  | 조건                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------- |
+| `BAD_POLICY`                          | 정책 ID 불일치                                                                        |
+| `ROUND_GAP`                           | roundId가 직전 + 1이 아님                                                             |
+| `BAD_VALIDITY`                        | 유효기한이 지났거나 지금 + `maxAge` 초과, `confirmedAt`이 미래이거나 직전 값보다 과거 |
+| `BAD_PRICE`                           | 0 또는 1e30 초과                                                                      |
+| `PRICE_JUMP`                          | 직전 가격 대비 변동이 `maxChangeBps` 초과 (첫 보고서는 제외)                          |
+| `TOO_SOON`                            | 가격이 바뀌는 보고서인데 직전 가격 변경 후 `minInterval` 미경과                       |
+| `NOT_ENOUGH_SIGNATURES`, `BAD_SIGNER` | 기존과 같음                                                                           |
 
 가격이 같은 보고서는 `minInterval`과 무관하게 받는다(유효기한 연장용).
 
@@ -74,6 +74,8 @@
 배포 값(본 시장): `feeBps` 500(이자의 5%), `liquidationBonusBps` 500(5%) — 사용자 확정 2026-10-02. `staleSettleDelay` 7일, 최소 기간 1시간, 유예 하한 1일. 테스트 시장은 최소 기간·유예·`minInterval`·`staleSettleDelay`가 모두 5분.
 
 > 2026-10-02 사용자 변경: `liquidationBonusBps` 1000(10%), 화면의 담보 여유 50%(담보 가치의 50%까지 대출)·청산선 70%. 초기 알트코인의 변동성과 대출자 우대가 이유다. 7절의 40%/80%는 이 값으로 바뀌었다.
+
+> 2026-10-02 사용자 변경(2차): 가격이 끊긴 연체 대출은 대기 뒤 담보 전부 귀속이 아니라 **마지막 가격으로 정산**한다. 한도를 넘는 변동은 사람이 확인하지 않고 봇이 **하루 최대 30%씩 자동으로** 따라간다(`minInterval` 24시간). 4절·5절·6절·9절의 해당 설명은 이 메모가 우선한다.
 
 ## 6. 중계 봇
 

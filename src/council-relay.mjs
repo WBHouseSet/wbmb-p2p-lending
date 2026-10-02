@@ -1,5 +1,5 @@
 // Decides what the council price relay should publish. Pure: no network, no clock.
-import { formatUnits, parseUnits } from "ethers";
+import { parseUnits } from "ethers";
 
 export const COUNCIL_API_URL = "https://movnvote.com/api/public/price/latest";
 // Margin between the local decision and the block that carries it.
@@ -18,11 +18,11 @@ export function parseCouncilPrice(json) {
   return { price, confirmedAt: Math.floor(ms / 1000) };
 }
 
-/// `step` is the operator mode behind `--step`. Unattended runs leave it false and refuse
-/// whatever the contract could not accept. With it, a council price beyond the contract's
-/// per-report limit is approached one maximum step at a time, and an API confirmation time
-/// older than the chain's no longer blocks. Either way the report then carries the chain's
-/// `confirmedAt`: the operator, not the council, vouches for what is sent.
+/// A council price beyond the contract's per-report limit is approached one maximum step per
+/// `minInterval` (user decision 2026-10-02: automatic, no person in the loop). A stepped report
+/// carries the chain's `confirmedAt`, because its price is not one the council confirmed.
+/// `step` is the operator mode behind `--step`: it only lifts the refusal of an API
+/// confirmation time older than the chain's.
 export function planRelay({ api, chain, now, policyId, step = false }) {
   const submit = (price, confirmedAt, reason, extra = {}) => ({
     action: "submit",
@@ -51,17 +51,13 @@ export function planRelay({ api, chain, now, policyId, step = false }) {
     const up = api.price > chain.current;
     const diff = up ? api.price - chain.current : chain.current - api.price;
     const beyond = diff * 10000n > chain.current * BigInt(chain.maxChangeBps);
-    if (beyond && !step)
-      throw new Error(
-        `가격 변동이 컨트랙트 한도를 넘습니다 (카운슬 ${formatUnits(api.price, 18)} · 체인 ${formatUnits(chain.current, 18)} · 한도 ${chain.maxChangeBps / 100}%). 사람이 확인해야 합니다. 보내지 않았습니다. 값이 맞으면 --step 으로 한도만큼씩 옮길 수 있습니다.`,
-      );
     // Floored, so the step itself always satisfies the contract's `diff * BPS <= current * maxChangeBps`.
     const most = (chain.current * BigInt(chain.maxChangeBps)) / 10000n;
     const plan = beyond
       ? submit(
           up ? chain.current + most : chain.current - most,
           chain.confirmedAt,
-          "한도만큼 단계 이동",
+          `한도 ${chain.maxChangeBps / 100}%만큼 단계 이동`,
           { step: true },
         )
       : older

@@ -164,20 +164,76 @@ describe("council-price market", () => {
     await conserved();
   });
 
-  it("stale price on an overdue loan: all collateral to the lender only after the extra delay", async () => {
+  it("stale price on an overdue loan: settles at the last price, only after the extra delay", async () => {
     const id = await loan600();
+    await f.publishPrice(us(80)); // the last price the relay ever published; 600 < 10 × 80 × 80%
     await advance(30 * DAY + DAY); // overdue, price long expired
     await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
     await advance(7 * DAY - 60);
     await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
     await advance(60);
     const q = await f.lending.quoteSettlement(id);
-    assert.equal(q.toLender, wb(10));
-    assert.equal(q.toBorrower, 0n);
-    assert.equal(q.price, 0n);
+    assert.equal(q.toLender, wb(7.875)); // 600 × 1.05 / 80
+    assert.equal(q.toBorrower, wb(2.125));
+    assert.equal(q.price, us(80));
     await tx(f.lending.settle(id));
-    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(10));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(7.875));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[1]), wb(2.125));
     await conserved();
+  });
+
+  it("a healthy loan that is not overdue never settles at a dead price, however long it is dead", async () => {
+    const id = await loan600({ duration: 300 * DAY });
+    await advance(6 * DAY + 30 * DAY);
+    await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
+  });
+
+  it("with no usable last price either, the lender takes all after the delay", async () => {
+    const policy = await deployContract("MockPricePolicy", f.admin, []);
+    const lending = await deployContract("P2PLending", f.admin, [
+      f.usdt.target,
+      f.wbmb.target,
+      policy.target,
+      f.feeWallet,
+      500,
+      3600,
+      DAY,
+      500,
+      7 * DAY,
+    ]);
+    await tx(policy.set(us(100), (await now()) + DAY, us(100)));
+    await tx(f.usdt.connect(f.lender).approve(lending.target, us(600)));
+    await tx(
+      lending
+        .connect(f.lender)
+        .createOffer(1, us(600), 0, us(10), (await now()) + DAY, {
+          ...f.terms,
+          aprBps: 0,
+          duration: DAY,
+        }),
+    );
+    await tx(f.wbmb.connect(f.borrower).approve(lending.target, wb(10)));
+    await tx(
+      lending
+        .connect(f.borrower)
+        .fillOffer(1, us(600), wb(10), (await now()) + 300),
+    );
+    const expiry = (await now()) + DAY;
+    for (const last of [0n, 10n ** 30n + 1n]) {
+      await tx(policy.set(0, expiry, last));
+      const snapshot = await f.provider.send("evm_snapshot", []);
+      await advance(2 * DAY + 7 * DAY - 120);
+      await assert.rejects(lending.settle(1), /STALE_PRICE/);
+      await advance(240);
+      const q = await lending.quoteSettlement(1);
+      assert.deepEqual([q.toLender, q.toBorrower, q.price], [wb(10), 0n, 0n]);
+      await f.provider.send("evm_revert", [snapshot]);
+    }
+    // The same loan with a usable last price settles at it.
+    await tx(policy.set(0, expiry, us(90)));
+    await advance(2 * DAY + 7 * DAY + 120);
+    const q = await lending.quoteSettlement(1);
+    assert.deepEqual([q.toLender, q.price], [wb(7), us(90)]); // 600 × 1.05 / 90
   });
 
   it("a price that dies long after the deadline still makes the lender wait the full delay", async () => {
@@ -203,11 +259,11 @@ describe("council-price market", () => {
     await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
     await advance(120);
     const q = await f.lending.quoteSettlement(id);
-    assert.equal(q.toLender, wb(10));
-    assert.equal(q.toBorrower, 0n);
-    assert.equal(q.price, 0n);
+    assert.equal(q.toLender, wb(6.3));
+    assert.equal(q.toBorrower, wb(3.7));
+    assert.equal(q.price, us(100));
     await tx(f.lending.settle(id));
-    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(10));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(6.3));
     await conserved();
   });
 

@@ -132,7 +132,7 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
     "배정 담보: 1 WBMB",
   );
   await expect(borrower.locator("#confirm-body")).toContainText(
-    /청산 가격: 80\.214\d USDT 이하/,
+    "청산 가격: 80.22 USDT 이하", // 80.2143 shown rounded up
   );
   await commit(borrower, "부분 체결 완료");
   // One day to maturity, one day of grace. The relayed price stays valid for six days.

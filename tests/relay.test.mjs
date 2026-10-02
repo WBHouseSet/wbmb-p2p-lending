@@ -100,24 +100,22 @@ describe("planRelay", () => {
     assert.equal(p.report.price, us("112.3"));
     assert.equal(p.report.confirmedAt, CONFIRMED);
   });
-  it("refuses a change beyond the on-chain limit", () => {
-    assert.throws(() => plan(api("146"), chain()), /한도/);
-    assert.throws(() => plan(api("78.6"), chain()), /한도/);
+  it("a change beyond the on-chain limit moves one maximum step, unattended", () => {
+    const up = plan(api("146", CONFIRMED + 60), chain());
+    assert.deepEqual(
+      [up.action, up.step, up.report.price, up.report.confirmedAt],
+      ["submit", true, us("145.99"), CONFIRMED], // 112.3 × 1.3
+    );
+    assert.match(up.reason, /한도 30%만큼 단계 이동/);
+    const down = plan(api("78.6", CONFIRMED + 60), chain());
+    assert.deepEqual(
+      [down.action, down.step, down.report.price],
+      ["submit", true, us("78.61")], // 112.3 × 0.7
+    );
   });
   it("refuses a confirmation time in the future or older than the chain's", () => {
     assert.throws(() => plan(api("112.3", now + 10), chain()), /확정 시각/);
     assert.throws(() => plan(api("118", CONFIRMED - 10), chain()), /확정 시각/);
-  });
-  it("an over-limit refusal names the council price, the chain price, the limit and --step", () => {
-    assert.throws(
-      () => plan(api("146"), chain()),
-      (e) =>
-        /카운슬 146\.0/.test(e.message) &&
-        /체인 112\.3/.test(e.message) &&
-        /한도 30%/.test(e.message) &&
-        /--step/.test(e.message) &&
-        /보내지 않았습니다/.test(e.message),
-    );
   });
 
   // Operator mode: `step` is only ever set by a person running --step.
@@ -422,10 +420,10 @@ describe("relayCouncil with the deployed limits, on a local chain", () => {
   it("the policy under test carries the deployed limits", async () => {
     assert.deepEqual(
       [maxAge, maxChangeBps, minInterval],
-      [6 * 86400, 3000, 43200],
+      [6 * 86400, 3000, 86400],
     );
     assert.equal(await oracle.maxChangeBps(), 3000n);
-    assert.equal(await oracle.minInterval(), 43200n);
+    assert.equal(await oracle.minInterval(), 86400n);
   });
   it("a changed price waits for minInterval, then the contract accepts it", async () => {
     await run(100, T0);
@@ -469,17 +467,14 @@ describe("relayCouncil with the deployed limits, on a local chain", () => {
     assert.equal(s.previous, before.previous);
     assert.equal(s.confirmedAt, before.confirmedAt);
   });
-  it("an over-limit council price is refused and nothing is sent", async () => {
+  it("an over-limit dry run without --step plans the same step and sends nothing", async () => {
     const before = await state();
     const nonce = await sent();
     // 110 -> 180 is +63.6%, beyond the 30% the contract can ever accept in one report.
-    await assert.rejects(
-      run(180, T2),
-      (e) =>
-        /한도/.test(e.message) &&
-        /카운슬 180\.0/.test(e.message) &&
-        /체인 110\.0/.test(e.message) &&
-        /--step/.test(e.message),
+    const r = await run(180, T2, { broadcast: false });
+    assert.deepEqual(
+      { action: r.action, broadcast: r.broadcast, step: r.step },
+      { action: "submit", broadcast: false, step: true },
     );
     assert.equal(await sent(), nonce);
     assert.deepEqual(await state(), before);
@@ -538,7 +533,7 @@ describe("relayCouncil with the deployed limits, on a local chain", () => {
   it("after minInterval the next ordinary run reaches the council price", async () => {
     const nonce = await sent();
     assert.equal((await run(180, T2)).action, "wait");
-    assert.equal((await run(180, T2, { step: true })).action, "wait");
+    assert.equal((await run(180, T2)).action, "wait");
     assert.equal(await sent(), nonce);
     await advance(minInterval);
     // 143 -> 180 is +25.9%: within the limit, so no --step is needed.

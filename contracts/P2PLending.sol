@@ -70,8 +70,8 @@ contract P2PLending is ReentrancyGuard {
     uint256 public immutable minGrace;
     /// Extra share of the debt a lender receives in WBMB when a priced loan is settled.
     uint256 public immutable liquidationBonusBps;
-    /// How long a priced loan waits for a usable price before the lender takes all. The wait runs from the
-    /// later of the loan deadline (maturity + grace) and the price expiry (the policy's validUntil).
+    /// How long an overdue priced loan waits for a usable price before it settles at the last accepted one. The wait
+    /// runs from the later of the loan deadline (maturity + grace) and the price expiry (the policy's validUntil).
     uint256 public immutable staleSettleDelay;
     uint256 public offerCount;
     uint256 public loanCount;
@@ -275,14 +275,16 @@ contract P2PLending is ReentrancyGuard {
             return (l.collateral, 0, debt, 0);
         }
         bool ok;
-        // A price outside (0, 1e30] is treated like a dead price: no price settlement, only the delayed escape below.
+        // A price outside (0, 1e30] is treated like a dead price: no live settlement, only the delayed escape below.
         try pricePolicy.prices() returns (uint256, uint256 p) { price = p; ok = p > 0 && p <= 1e30; } catch {}
         if (!ok) {
-            // A dead price relay must not lock an overdue loan forever. The wait runs from the later of the loan
-            // deadline and the price expiry, so a short outage cannot hand a long-overdue borrower's surplus to the lender.
+            // A dead price relay must not lock an overdue loan forever: after the wait it settles at the last accepted
+            // price. The wait runs from the later of the loan deadline and the price expiry, so a short outage changes nothing.
             uint256 start = Math.max(uint256(l.maturity) + l.terms.grace, uint256(pricePolicy.validUntil()));
             require(block.timestamp >= start + staleSettleDelay, "STALE_PRICE");
-            return (l.collateral, 0, debt, 0);
+            try pricePolicy.current() returns (uint256 p) { price = p; ok = p > 0 && p <= 1e30; } catch {}
+            // No usable last price either (not reachable with CouncilPricePolicy): the lender takes all rather than nobody.
+            if (!ok) return (l.collateral, 0, debt, 0);
         }
         uint256 threshold = Math.mulDiv(Math.mulDiv(l.collateral, price, WBMB_UNIT), l.terms.liquidationBps, BPS);
         require(overdue || debt >= threshold, "HEALTHY");
