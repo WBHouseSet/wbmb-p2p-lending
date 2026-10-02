@@ -56,11 +56,12 @@
       </section>
       <section class="metrics" aria-label="시장 정보">
         <div>
-          <span>7일 구간평균 최저가 · 모의</span
+          <span id="week-label">7일 구간평균 최저가 · 모의</span
           ><strong id="week-price">—</strong><small>USDT / WBMB</small>
         </div>
         <div>
-          <span>현재 평가가격 · 모의</span><strong id="current-price">—</strong
+          <span id="current-label">현재 평가가격 · 모의</span
+          ><strong id="current-price">—</strong
           ><small id="price-state">가격 확인 중</small>
         </div>
         <div>
@@ -124,6 +125,9 @@
             1일 경과</button
           ><button id="advance-month" class="button outline small">
             31일 경과
+          </button>
+          <button id="advance-week" class="button outline small" hidden>
+            7일 경과 (가격 갱신 없음)
           </button>
         </div>
       </details>

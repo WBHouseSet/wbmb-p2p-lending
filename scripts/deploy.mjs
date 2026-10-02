@@ -347,6 +347,33 @@ export async function deployCouncilFixture(provider, { seed = false } = {}) {
   };
 }
 export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
+  if (f.oracle && f.feeWallet) {
+    const council = {
+      version: 3,
+      demo: true,
+      policy: "council",
+      chainId: 31337,
+      rpcUrl,
+      deployedAt: new Date().toISOString(),
+      feeWallet: f.feeWallet,
+      feeBps: 500,
+      liquidationBonusBps: 500,
+      addresses: {
+        usdt: f.usdt.target,
+        wbmb: f.wbmb.target,
+        lending: f.lending.target,
+        oracle: f.oracle.target,
+      },
+      demoAccounts: f.addresses.slice(1),
+      oracle: {
+        contract: "CouncilPricePolicy",
+        reporterIndex: COUNCIL_REPORTER_INDEX,
+        maxAge: COUNCIL_MAX_AGE,
+      },
+    };
+    fs.writeFileSync(filename, JSON.stringify(council, null, 2) + "\n");
+    return;
+  }
   if (!f.oracle) {
     const fixed = {
       version: 2,

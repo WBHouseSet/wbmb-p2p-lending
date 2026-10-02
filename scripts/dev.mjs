@@ -5,6 +5,7 @@ import { compile } from "./compile.mjs";
 import {
   deployFixture,
   deployFixedFixture,
+  deployCouncilFixture,
   saveDeployment,
 } from "./deploy.mjs";
 import fs from "node:fs";
@@ -25,11 +26,13 @@ async function stop() {
   await rpc.close();
 }
 try {
-  // MARKET=fixed runs the oracle-free market (the mainnet configuration) with mock tokens.
+  // MARKET=fixed runs the oracle-free market, MARKET=council the council-price market.
   const fixture =
     process.env.MARKET === "fixed"
       ? await deployFixedFixture(provider, { seed: true })
-      : await deployFixture(provider, { seed: true });
+      : process.env.MARKET === "council"
+        ? await deployCouncilFixture(provider, { seed: true })
+        : await deployFixture(provider, { seed: true });
   const publicDir = path.resolve(`.local/web-${appPort}`);
   fs.mkdirSync(publicDir, { recursive: true });
   fs.copyFileSync("public/abis.json", path.join(publicDir, "abis.json"));
