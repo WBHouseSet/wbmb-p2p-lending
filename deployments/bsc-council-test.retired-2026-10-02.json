@@ -1,7 +1,7 @@
 {
   "network": "bsc",
   "chainId": 56,
-  "lending": "0x1099Af3B831F4Aa176B99f51c00977930294b217",
+  "lending": "0xB625C5883607d4dE8196E23f2101E9Dff6F0BF1F",
   "deployer": "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
   "feeWallet": "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
   "feeBps": 500,
@@ -10,10 +10,10 @@
   "minGrace": 300,
   "usdt": "0x55d398326f99059fF775485246999027B3197955",
   "wbmb": "0x9E4c611B834672c3643D9818249366bf65ae4C86",
-  "pricePolicy": "0x0F11b320bDa3d929d843f338BeF56C35C257bE5e",
+  "pricePolicy": "0x6E902D88411bfAB36E4b58e9814b05C1b3787Fb2",
   "liquidationBonusBps": 1000,
   "staleSettleDelay": 300,
-  "policyTxHash": "0xc7912223b71b201fde16c0fbb518110ec1cd0d8b139295a2d95c3fcbb5535e74",
+  "policyTxHash": "0x1c634cf4e79e5548008d52836dcceb66eb66a710bd9e3bcb4fff9c970c3dad65",
   "council": {
     "reporter": "0x8C8C0CA56674307802ECcA32cAEA04d80355a47B",
     "policyId": "0xea06272eea9d92179c3614078d4076769ad0d4eb1a6150c2c23840c6500b3598",
@@ -31,10 +31,10 @@
     "3000",
     "300"
   ],
-  "txHash": "0x9949077f37409ae07de6d1f1bdf863ee10b45e97c919859f908fbbfff6ec07c6",
-  "blockNumber": 125256464,
-  "gasUsed": "3128389",
-  "deployedAt": "2026-10-02T07:58:38.200Z",
+  "txHash": "0x78114fe9c0436f073c7dd7eee195e9297e3c222a383332b76adc92c367b43e5b",
+  "blockNumber": 125248724,
+  "gasUsed": "3096386",
+  "deployedAt": "2026-10-02T07:00:33.797Z",
   "compiler": {
     "solc": "0.8.37",
     "optimizerRuns": 200,
@@ -44,7 +44,7 @@
   "constructorArgs": [
     "0x55d398326f99059fF775485246999027B3197955",
     "0x9E4c611B834672c3643D9818249366bf65ae4C86",
-    "0x0F11b320bDa3d929d843f338BeF56C35C257bE5e",
+    "0x6E902D88411bfAB36E4b58e9814b05C1b3787Fb2",
     "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
     "500",
     "300",
