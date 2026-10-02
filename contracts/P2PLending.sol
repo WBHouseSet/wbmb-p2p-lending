@@ -64,12 +64,14 @@ contract P2PLending is ReentrancyGuard {
     IPricePolicy public immutable pricePolicy;
     address public immutable feeVault;
     uint256 public immutable feeBps;
-    /// Shortest loan and (oracle-free) shortest grace this deployment accepts, in seconds.
+    /// Shortest loan and shortest grace this deployment accepts, in seconds. The grace floor binds
+    /// every offer, priced or oracle-free.
     uint256 public immutable minDuration;
     uint256 public immutable minGrace;
     /// Extra share of the debt a lender receives in WBMB when a priced loan is settled.
     uint256 public immutable liquidationBonusBps;
-    /// How long past maturity + grace a priced loan waits for a price before the lender takes all.
+    /// How long a priced loan waits for a usable price before the lender takes all. The wait runs from the
+    /// later of the loan deadline (maturity + grace) and the price expiry (the policy's validUntil).
     uint256 public immutable staleSettleDelay;
     uint256 public offerCount;
     uint256 public loanCount;
@@ -273,6 +275,7 @@ contract P2PLending is ReentrancyGuard {
             return (l.collateral, 0, debt, 0);
         }
         bool ok;
+        // A price outside (0, 1e30] is treated like a dead price: no price settlement, only the delayed escape below.
         try pricePolicy.prices() returns (uint256, uint256 p) { price = p; ok = p > 0 && p <= 1e30; } catch {}
         if (!ok) {
             // A dead price relay must not lock an overdue loan forever. The wait runs from the later of the loan
