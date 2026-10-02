@@ -990,7 +990,7 @@ async function init() {
       (council()
         ? config.oracle?.contract === "CouncilPricePolicy"
         : config.oracle?.contract === "SignedPricePolicy"));
-  // Live mode only exists for the oracle-free market on an allow-listed chain.
+  // Live mode exists for the oracle-free and the council-price market on an allow-listed chain.
   const sameAddress = (a, b) =>
     typeof a === "string" &&
     typeof b === "string" &&
@@ -999,7 +999,8 @@ async function init() {
   // deployment.json cannot redirect approvals to another contract.
   const liveOk =
     config.demo === false &&
-    fixed() &&
+    (fixed() ||
+      (council() && sameAddress(config.addresses?.oracle, PINNED?.oracle))) &&
     PINNED !== null &&
     typeof config.chainId === "number" &&
     Object.hasOwn(LIVE_CHAINS, config.chainId) &&

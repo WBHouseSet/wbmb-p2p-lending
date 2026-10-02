@@ -15,6 +15,7 @@ import {
 import { createServer } from "vite";
 import { compile } from "./compile.mjs";
 import { deployBsc, liveWebConfig } from "./deploy-bsc.mjs";
+import { relayCouncil } from "./relay-council.mjs";
 import { us, wb } from "./deploy.mjs";
 import { BSC } from "../config/bsc.mjs";
 
@@ -63,13 +64,42 @@ try {
     deployer.address,
     "0x16345785D8A0000",
   ]);
+  const councilMarket = process.env.MARKET === "council";
+  // Throwaway reporter: the council market is rehearsed with the real relay code.
+  const reporter = Wallet.createRandom();
+  if (councilMarket)
+    await local.send("hardhat_setBalance", [
+      reporter.address,
+      "0x16345785D8A0000",
+    ]);
   const record = await deployBsc({
     rpcUrl: url,
     secret: deployer.privateKey,
     broadcast: true,
     confirmations: 1,
     outDir: `.local/rehearsal-${appPort}`,
+    ...(councilMarket
+      ? { profile: "council", reporter: reporter.address }
+      : {}),
   });
+  // The first price comes from the real relay with a fixed API answer, so the rehearsal
+  // never depends on the live API. confirmedAt is in the past: the chain follows the real clock.
+  if (councilMarket)
+    await relayCouncil({
+      rpcUrl: url,
+      policy: record.pricePolicy,
+      secret: reporter.privateKey,
+      broadcast: true,
+      log: () => {},
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({
+          price: 112.3,
+          date: "rehearsal",
+          confirmedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      }),
+    });
   const accounts = await local.send("eth_accounts", []);
   for (const who of accounts.slice(1, 3)) {
     await give(BSC.usdt, who, us(5000));
@@ -80,7 +110,10 @@ try {
   const abis = JSON.parse(fs.readFileSync("public/abis.json", "utf8"));
   fs.writeFileSync(
     path.join(publicDir, "abis.json"),
-    JSON.stringify({ P2PLending: abis.P2PLending }) + "\n",
+    JSON.stringify({
+      P2PLending: abis.P2PLending,
+      ...(councilMarket ? { CouncilPricePolicy: abis.CouncilPricePolicy } : {}),
+    }) + "\n",
   );
   fs.writeFileSync(
     path.join(publicDir, "deployment.json"),
@@ -95,6 +128,7 @@ try {
         usdt: record.usdt,
         wbmb: record.wbmb,
         feeWallet: record.feeWallet,
+        ...(councilMarket ? { oracle: record.pricePolicy } : {}),
       }),
     },
     server: { host: "127.0.0.1", port: appPort, strictPort: true },

@@ -12,5 +12,6 @@ playwright-report/
 !.env.example
 *.log
 dist-live/
+dist-live-council/
 *.key
 deployments/*.local.json
