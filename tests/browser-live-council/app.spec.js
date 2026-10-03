@@ -1,7 +1,14 @@
 import { test, expect } from "@playwright/test";
+import fs from "node:fs";
+import { relayCouncil } from "../../scripts/relay-council.mjs";
 
 test.describe.configure({ mode: "serial" });
 const RPC = "http://127.0.0.1:18563";
+// Pages opened with browser.newPage() outlive their test; close them so later tests do not
+// run beside a dozen idle pages.
+test.afterEach(async ({ browser }) => {
+  for (const context of browser.contexts()) await context.close();
+});
 // Mock EIP-1193 wallet backed by an unlocked local account. `index` picks the account.
 // `rejectAfter` ≥ 0: the wallet refuses (code 4001) every eth_sendTransaction after that many.
 async function wallet(page, index, { rejectAfter = -1 } = {}) {
@@ -352,4 +359,246 @@ test("the page approves exactly the amount it moves, never an unlimited allowanc
     "latest",
   ]);
   expect(BigInt(allowance)).toBe(0n);
+});
+
+// ---- Every remaining web flow on the MOVN replica: repay, cancel, claims, fee flush,
+// ---- price-drop liquidation, top-up rescue, stale-price settlement.
+// Offers 1–4 and loans 1–2 exist from the tests above; ids below continue from there.
+
+// Relays `price` with the throwaway reporter the rehearsal wrote; confirmedAt is just
+// before the chain clock, so the real relay code accepts it as a fresh council answer.
+async function relay(price) {
+  const record = JSON.parse(
+    fs.readFileSync(".local/rehearsal-5186/bsc-council-movn.json", "utf8"),
+  );
+  const secret = fs.readFileSync(".local/rehearsal-5186/reporter.key", "utf8");
+  const block = await rpc("eth_getBlockByNumber", ["latest", false]);
+  await relayCouncil({
+    rpcUrl: RPC,
+    policy: record.pricePolicy,
+    secret,
+    broadcast: true,
+    log: () => {},
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        price,
+        date: "rehearsal",
+        confirmedAt: new Date(
+          Number(block.timestamp) * 1000 - 1000,
+        ).toISOString(),
+      }),
+    }),
+  });
+}
+async function post(page, total, { apr, duration } = {}) {
+  await page.locator("#open-offer").click();
+  await page.locator('#offer-form [name="side"]').selectOption("1");
+  await page.locator('#offer-form [name="total"]').fill(total);
+  await page.locator('#offer-form [name="minFill"]').fill(total);
+  if (apr !== undefined)
+    await page.locator('#offer-form [name="apr"]').fill(apr);
+  if (duration !== undefined)
+    await page.locator('#offer-form [name="duration"]').fill(duration);
+  await page.locator('#offer-form button[type="submit"]').click();
+  await commit(page, "거래 게시 완료");
+}
+async function fill(page, offer, amount) {
+  await page.locator("#refresh").click();
+  await page.locator('[data-tab="borrow"]').click();
+  await page.locator(`[data-fill-amount="${offer}"]`).fill(amount);
+  await page.locator(`[data-offer="${offer}"] [data-action="fill"]`).click();
+  await commit(page, "부분 체결 완료");
+}
+async function pair(browser) {
+  const lender = await browser.newPage();
+  await wallet(lender, 2);
+  await open(lender);
+  await connect(lender);
+  const borrower = await browser.newPage();
+  await wallet(borrower, 1);
+  await open(borrower);
+  await connect(borrower);
+  return { lender, borrower };
+}
+// Refresh, then wait until the page has finished re-rendering (its reads are fetches, so
+// network idle means the cards are final); clicking a card while it is being replaced makes
+// Playwright retry the click on the new element, possibly after the test moved the clock.
+const mine = async (page) => {
+  await expect(page.locator("#refresh")).toBeEnabled();
+  await page.locator("#refresh").click();
+  await page.waitForLoadState("networkidle");
+  await page.locator('[data-tab="mine"]').click();
+  await page.waitForLoadState("networkidle");
+};
+
+test("interest-only, then partial, then full repayment in MOVN; both sides claim; the fee wallet moves the MOVN fee", async ({
+  browser,
+}) => {
+  const { lender, borrower } = await pair(browser);
+  // A lender never sees a fill control on their own post.
+  await post(lender, "33"); // offer 5
+  await lender.locator('[data-tab="borrow"]').click();
+  await expect(lender.locator('[data-offer="5"]')).toBeVisible();
+  await expect(
+    lender.locator('[data-offer="5"] [data-action="fill"]'),
+  ).toHaveCount(0);
+  await fill(borrower, 5, "33"); // loan 3
+  await mine(borrower);
+  const loan = borrower.locator('[data-loan="3"]');
+  // Interest only: the loan stays open and the principal is untouched.
+  await loan.locator('[data-action="interest"]').click();
+  await commit(borrower, "이자 납부 완료");
+  await expect(loan).toContainText("진행 중");
+  // Partial: 13 of 33 back; still open.
+  await borrower.locator('[data-repay-amount="3"]').fill("13");
+  await loan.locator('[data-action="repay"]').click();
+  await commit(borrower, "상환 완료");
+  await expect(loan).toContainText("진행 중");
+  await expect(loan).toContainText("20");
+  // Full: the rest.
+  await borrower.locator('[data-repay-amount="3"]').fill("20");
+  await loan.locator('[data-action="repay"]').click();
+  await commit(borrower, "상환 완료");
+  await expect(loan).toContainText("MOVN 상환 완료");
+  await borrower.locator('[data-action="claimWBMB"]').click();
+  await commit(borrower, "WBMB 수령 완료");
+  await expect(borrower.locator('[data-action="claimWBMB"]')).toBeDisabled();
+  await mine(lender);
+  await expect(lender.locator(".claim-box")).toContainText("33.");
+  await lender.locator('[data-action="claimMOVN"]').click();
+  await commit(lender, "MOVN 수령 완료");
+  await expect(lender.locator('[data-action="claimMOVN"]')).toBeDisabled();
+  // Fee wallet (account 3): the fee tab shows what accrued and moves it.
+  const fee = await browser.newPage();
+  await wallet(fee, 3);
+  await open(fee);
+  await connect(fee);
+  await fee.locator('[data-tab="burn"]').click();
+  await expect(fee.locator(".burn-stats")).toContainText(
+    "컨트랙트에 쌓인 수수료",
+  );
+  await expect(fee.locator('[data-action="flush"]')).toBeEnabled();
+  await fee.locator('[data-action="flush"]').click();
+  await commit(fee, "수수료 이동 완료");
+  await expect(fee.locator('[data-action="flush"]')).toBeDisabled();
+});
+
+test("a lender cancels an unfilled offer and takes the MOVN back; a cancelled offer cannot be filled", async ({
+  browser,
+}) => {
+  const { lender, borrower } = await pair(browser);
+  await post(lender, "5"); // offer 6
+  await mine(lender);
+  await lender.locator('[data-offer="6"] [data-action="close"]').click();
+  await commit(lender, "미체결분 회수 완료");
+  await lender.locator('[data-action="claimMOVN"]').click();
+  await commit(lender, "MOVN 수령 완료");
+  await borrower.locator("#refresh").click();
+  await borrower.locator('[data-tab="borrow"]').click();
+  await expect(
+    borrower.locator('[data-offer="6"] [data-action="fill"]'),
+  ).toHaveCount(0);
+});
+
+test("the council price falls below the line: a third party settles, the lender gets debt + 10%, the fee wallet claims its WBMB", async ({
+  browser,
+}) => {
+  const { lender, borrower } = await pair(browser);
+  await post(lender, "50"); // offer 7
+  await fill(borrower, 7, "50"); // loan 4: minimum collateral at 112.3, line ≈ 80.21
+  await mine(borrower);
+  await borrower.locator('[data-loan="4"] [data-action="settle"]').click();
+  await expect(borrower.locator("#status")).toContainText(
+    "가격 청산 조건에 해당하지 않습니다",
+  );
+  // The council profile allows one 30% step per day: 112.3 → 78.61, below the line.
+  await rpc("evm_increaseTime", [86400 + 60]);
+  await rpc("evm_mine");
+  await relay(60);
+  await mine(borrower);
+  await expect(borrower.locator("#current-price")).toHaveText("78.61");
+  await expect(
+    borrower.locator('[data-loan="4"] [data-liq-price]'),
+  ).toContainText("MOVN");
+  // Anyone may settle: the fee wallet's account does it here.
+  const keeper = await browser.newPage();
+  await wallet(keeper, 3);
+  await open(keeper);
+  await connect(keeper);
+  await keeper.locator('[data-tab="borrow"]').click();
+  await keeper.locator("#refresh").click();
+  await keeper.locator('[data-tab="mine"]').click();
+  // The keeper has no loan card; settle through the borrower's card instead.
+  await borrower.locator('[data-loan="4"] [data-action="settle"]').click();
+  await expect(borrower.locator("#confirm-body")).toContainText(
+    "보너스 10% 포함",
+  );
+  await expect(borrower.locator("#confirm-body")).toContainText(
+    "적용 가격 78.61 MOVN",
+  );
+  await commit(borrower, "WBMB 정산 완료");
+  await mine(lender);
+  await lender.locator('[data-action="claimWBMB"]').click();
+  await commit(lender, "WBMB 수령 완료");
+  await keeper.locator("#refresh").click();
+  await keeper.locator('[data-tab="mine"]').click();
+  await keeper.locator('[data-action="claimWBMB"]').click();
+  await commit(keeper, "WBMB 수령 완료");
+});
+
+test("a borrower who tops up before the price falls is not liquidated", async ({
+  browser,
+}) => {
+  const { lender, borrower } = await pair(browser);
+  await post(lender, "20"); // offer 8
+  await fill(borrower, 8, "20"); // loan 5 at 78.61
+  await mine(borrower);
+  await borrower.locator('[data-topup-amount="5"]').fill("1");
+  await borrower.locator('[data-loan="5"] [data-action="topup"]').click();
+  await commit(borrower, "담보 추가 완료");
+  await rpc("evm_increaseTime", [86400 + 60]);
+  await rpc("evm_mine");
+  await relay(60); // 78.61 → 60 (within 30%)
+  await mine(borrower);
+  await expect(borrower.locator("#current-price")).toHaveText("60");
+  await borrower.locator('[data-loan="5"] [data-action="settle"]').click();
+  await expect(borrower.locator("#status")).toContainText(
+    "가격 청산 조건에 해당하지 않습니다",
+  );
+  await expect(borrower.locator('[data-loan="5"]')).toContainText("진행 중");
+});
+
+test("with the council price expired, a loan past grace settles only after the stale delay", async ({
+  browser,
+}) => {
+  const { lender, borrower } = await pair(browser);
+  await post(lender, "10", { apr: "0", duration: "1" }); // offer 9
+  await fill(borrower, 9, "10"); // loan 6
+  // Past maturity + grace but the price (valid 6 days) is still live: nothing to settle.
+  await rpc("evm_increaseTime", [2 * 86400 + 60]);
+  await rpc("evm_mine");
+  await mine(borrower);
+  await expect(borrower.locator("#price-state")).toContainText("유효");
+  // Past the price's validity but not yet the 7-day stale delay: refused and explained.
+  await rpc("evm_increaseTime", [5 * 86400]);
+  await rpc("evm_mine");
+  await mine(borrower);
+  await expect(borrower.locator("#price-state")).not.toContainText("유효");
+  await borrower.locator('[data-loan="6"] [data-action="settle"]').click();
+  await expect(borrower.locator("#status")).toContainText("가격이 만료되어");
+  // The refused quote leaves the page usable.
+  await expect(borrower.locator("#refresh")).toBeEnabled();
+  // After the stale delay the loan ends in WBMB at the last price.
+  await rpc("evm_increaseTime", [8 * 86400]);
+  await rpc("evm_mine");
+  await mine(borrower);
+  await borrower.locator('[data-loan="6"] [data-action="settle"]').click();
+  await commit(borrower, "WBMB 정산 완료");
+  await expect(borrower.locator('[data-loan="6"]')).toContainText(
+    "WBMB 정산 완료",
+  );
+  await mine(lender);
+  await lender.locator('[data-action="claimWBMB"]').click();
+  await commit(lender, "WBMB 수령 완료");
 });

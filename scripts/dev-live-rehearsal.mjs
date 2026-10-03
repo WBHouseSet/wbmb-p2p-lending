@@ -77,16 +77,27 @@ try {
       reporter.address,
       "0x16345785D8A0000",
     ]);
+  const accounts = await local.send("eth_accounts", []);
   const record = await deployBsc({
     rpcUrl: url,
     secret: deployer.privateKey,
     broadcast: true,
     confirmations: 1,
     outDir: `.local/rehearsal-${appPort}`,
+    // The fee wallet is a browser-reachable account so the fee tab can be rehearsed.
+    feeWallet: accounts[3],
     ...(councilMarket
       ? { profile: "council", reporter: reporter.address }
       : {}),
   });
+  // Throwaway key for the replica only (deployBsc wipes the directory first), so a
+  // browser test can relay further council prices through the real relay code.
+  if (councilMarket)
+    fs.writeFileSync(
+      `.local/rehearsal-${appPort}/reporter.key`,
+      reporter.privateKey + "\n",
+      { mode: 0o600 },
+    );
   // The first price comes from the real relay with a fixed API answer, so the rehearsal
   // never depends on the live API. confirmedAt is in the past: the chain follows the real clock.
   if (councilMarket)
@@ -105,7 +116,6 @@ try {
         }),
       }),
     });
-  const accounts = await local.send("eth_accounts", []);
   for (const who of accounts.slice(1, 3)) {
     await give(BSC.movn, who, us(5000));
     await give(BSC.wbmb, who, wb(50));
