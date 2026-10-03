@@ -22,6 +22,8 @@ test("read-only marketplace and mobile layout do not require wallet or private k
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await ready(page);
+  // The live-only MOVN risk note stays hidden on the local demo.
+  await expect(page.locator("#movn-risk")).toBeHidden();
   await expect(page.locator("h1")).toContainText("조건은 우리가");
   await expect(page.locator("#verify")).toBeHidden();
   await expect(page.locator("[data-offer='2']")).toContainText("빌려드려요");
@@ -61,14 +63,14 @@ test("borrower fills lender offer, adds collateral, pays interest and repays, le
   await commit(page, "이자 납부 완료");
   await page.locator('[data-loan="1"] [data-action="repay"]').click();
   await commit(page, "상환 완료");
-  await expect(page.locator('[data-loan="1"]')).toContainText("USDT 상환 완료");
+  await expect(page.locator('[data-loan="1"]')).toContainText("MOVN 상환 완료");
   await page.locator('[data-action="claimWBMB"]').click();
   await commit(page, "WBMB 수령 완료");
   await expect(page.locator('[data-action="claimWBMB"]')).toBeDisabled();
   await account(page, 2);
-  await page.locator('[data-action="claimUSDT"]').click();
-  await commit(page, "USDT 수령 완료");
-  await expect(page.locator('[data-action="claimUSDT"]')).toBeDisabled();
+  await page.locator('[data-action="claimMOVN"]').click();
+  await commit(page, "MOVN 수령 완료");
+  await expect(page.locator('[data-action="claimMOVN"]')).toBeDisabled();
 });
 test("lender partially funds borrower, price drop settles in WBMB, fee burn remains separate", async ({
   page,
@@ -94,7 +96,7 @@ test("lender partially funds borrower, price drop settles in WBMB, fee burn rema
   await expect(page.locator("#current-price")).toContainText("94");
   await page.locator('[data-loan="2"] [data-action="settle"]').click();
   await expect(page.locator("#confirm-body")).toContainText(
-    "USDT가 지급되는 것이 아니며",
+    "MOVN이 지급되는 것이 아니며",
   );
   await commit(page, "WBMB 정산 완료");
   await page.locator('[data-action="claimWBMB"]').click();
@@ -125,8 +127,8 @@ test("new proposal, confirmation cancellation and unfilled escrow withdrawal", a
   await page.locator('[data-tab="mine"]').click();
   await page.locator('[data-offer="3"] [data-action="close"]').click();
   await commit(page, "미체결분 회수 완료");
-  await page.locator('[data-action="claimUSDT"]').click();
-  await commit(page, "USDT 수령 완료");
+  await page.locator('[data-action="claimMOVN"]').click();
+  await commit(page, "MOVN 수령 완료");
 });
 test("wallet connection uses EIP-1193 and invalidates session on account changes", async ({
   page,

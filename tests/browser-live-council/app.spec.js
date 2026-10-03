@@ -3,12 +3,20 @@ import { test, expect } from "@playwright/test";
 test.describe.configure({ mode: "serial" });
 const RPC = "http://127.0.0.1:18563";
 // Mock EIP-1193 wallet backed by an unlocked local account. `index` picks the account.
-async function wallet(page, index) {
+// `rejectAfter` ≥ 0: the wallet refuses (code 4001) every eth_sendTransaction after that many.
+async function wallet(page, index, { rejectAfter = -1 } = {}) {
   await page.addInitScript(
-    ({ rpc, index }) => {
+    ({ rpc, index, rejectAfter }) => {
       const listeners = {};
+      let sent = 0;
       window.ethereum = {
         request: async ({ method, params = [] }) => {
+          if (
+            method === "eth_sendTransaction" &&
+            rejectAfter >= 0 &&
+            sent++ >= rejectAfter
+          )
+            throw { code: 4001, message: "User rejected the request." };
           const actual =
             method === "eth_requestAccounts" ? "eth_accounts" : method;
           const r = await fetch(rpc, {
@@ -29,7 +37,7 @@ async function wallet(page, index) {
         removeListener: (name) => delete listeners[name],
       };
     },
-    { rpc: RPC, index },
+    { rpc: RPC, index, rejectAfter },
   );
 }
 async function open(page) {
@@ -99,7 +107,15 @@ test("live council page shows the relayed price and no demo controls", async ({
   await expect(page.locator("#current-label")).toContainText("카운슬 가격");
   await expect(page.locator("#current-price")).toHaveText("112.3");
   await expect(page.locator("#price-state")).toContainText("유효");
-  await expectVerifyBlock(page, ["lending", "oracle", "wbmb", "usdt"]);
+  await expectVerifyBlock(page, ["lending", "oracle", "wbmb", "movn"]);
+  // MOVN-specific risk: the issuer can pause or blacklist, and the council treats MOVN as $1.
+  const risk = page.locator("#movn-risk");
+  await expect(risk).toBeVisible();
+  await expect(risk).toContainText("MOVN 발행자는 전송을 멈추거나");
+  await expect(risk).toContainText("1달러");
+  // The verify block links the MOVN token to the explorer, never USDT.
+  await expect(page.locator("#verify-addresses")).toContainText("MOVN 토큰");
+  await expect(page.locator("#verify-addresses")).not.toContainText("USDT");
   expect(errors).toEqual([]);
 });
 
@@ -162,7 +178,7 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
     "배정 담보: 1 WBMB",
   );
   await expect(borrower.locator("#confirm-body")).toContainText(
-    "청산 가격: 80.22 USDT 이하", // 80.2143 shown rounded up
+    "청산 가격: 80.22 MOVN 이하", // 80.2143 shown rounded up
   );
   await commit(borrower, "부분 체결 완료");
   // One day to maturity, one day of grace. The relayed price stays valid for six days.
@@ -176,8 +192,8 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
   const body = borrower.locator("#confirm-body");
   await expect(body).toContainText("대출자 귀속 0.55 WBMB");
   await expect(body).toContainText("차입자 반환 0.45 WBMB");
-  await expect(body).toContainText("종료 부채 56.15 USDT");
-  await expect(body).toContainText("적용 가격 112.3 USDT · 보너스 10% 포함");
+  await expect(body).toContainText("종료 부채 56.15 MOVN");
+  await expect(body).toContainText("적용 가격 112.3 MOVN · 보너스 10% 포함");
   await commit(borrower, "WBMB 정산 완료");
   await expect(borrower.locator(".claim-box")).toContainText("0.45 WBMB");
   await lender.locator("#refresh").click();
@@ -200,7 +216,7 @@ test("a reload keeps the wallet and the open tab, so my post stays in view; disc
   await lender.locator('#offer-form button[type="submit"]').click();
   await commit(lender, "거래 게시 완료");
   await lender.locator('[data-tab="mine"]').click();
-  const mine = lender.locator("#cards [data-offer]", { hasText: "33 USDT" });
+  const mine = lender.locator("#cards [data-offer]", { hasText: "33 MOVN" });
   await expect(mine).toBeVisible();
   await lender.reload();
   await expect(lender.locator("#account-label")).toHaveText("연결된 지갑");
@@ -213,6 +229,21 @@ test("a reload keeps the wallet and the open tab, so my post stays in view; disc
   );
   await expect(lender.locator("#wallet-panel")).toBeHidden();
   await expect(lender.locator("#connect")).toHaveText("지갑 연결");
+});
+
+test("rejects a file whose MOVN address is swapped for USDT", async ({
+  page,
+}) => {
+  await page.route("**/deployment.json", async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.addresses.movn = "0x55d398326f99059fF775485246999027B3197955";
+    await route.fulfill({ response, json });
+  });
+  await page.goto("/");
+  await expect(page.locator("#status")).toContainText(
+    "허용되지 않은 배포 설정입니다",
+  );
 });
 
 test("rejects a swapped oracle address", async ({ page }) => {
@@ -273,4 +304,52 @@ test("rejects a file whose RPC endpoint was rewritten", async ({ page }) => {
   await expect(page.locator("#status")).toContainText(
     "허용되지 않은 배포 설정입니다",
   );
+});
+
+// Wallet says no: the page reports it, unlocks every control and the chain is untouched.
+test("a transaction the wallet rejects leaves no stuck state and no half-posted offer", async ({
+  page,
+}) => {
+  await wallet(page, 2, { rejectAfter: 0 });
+  await open(page);
+  await connect(page);
+  const before = await page.locator("#offer-count").textContent();
+  await page.locator("#open-offer").click();
+  await page.locator('#offer-form [name="side"]').selectOption("1");
+  await page.locator('#offer-form [name="total"]').fill("7");
+  await page.locator('#offer-form [name="minFill"]').fill("7");
+  await page.locator('#offer-form button[type="submit"]').click();
+  await expect(page.locator("#confirm-dialog")).toBeVisible();
+  await page.locator("#confirm-submit").click();
+  await expect(page.locator("#status")).toContainText(
+    "지갑에서 요청을 취소했습니다",
+  );
+  await expect(page.locator("#open-offer")).toBeEnabled();
+  await expect(page.locator("#offer-count")).toHaveText(before);
+});
+
+// Approvals are exact: after a lend post the market's allowance is spent to zero, never unlimited.
+test("the page approves exactly the amount it moves, never an unlimited allowance", async ({
+  page,
+}) => {
+  await wallet(page, 2);
+  await open(page);
+  await connect(page);
+  await page.locator("#open-offer").click();
+  await page.locator('#offer-form [name="side"]').selectOption("1");
+  await page.locator('#offer-form [name="total"]').fill("3");
+  await page.locator('#offer-form [name="minFill"]').fill("3");
+  await page.locator('#offer-form button[type="submit"]').click();
+  await commit(page, "거래 게시 완료");
+  const deployment = await (await page.request.get("/deployment.json")).json();
+  const accounts = await rpc("eth_accounts");
+  const data =
+    "0xdd62ed3e" + // allowance(address,address)
+    accounts[2].slice(2).padStart(64, "0") +
+    deployment.addresses.lending.slice(2).padStart(64, "0");
+  const allowance = await rpc("eth_call", [
+    { to: deployment.addresses.movn, data },
+    "latest",
+  ]);
+  expect(BigInt(allowance)).toBe(0n);
 });

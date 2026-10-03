@@ -94,7 +94,7 @@ test("live page warns about real funds and hides every demo control", async ({
   await expect(page.locator("#cards")).toContainText(
     "아직 열린 거래가 없습니다",
   );
-  await expectVerifyBlock(page, ["lending", "wbmb", "usdt"]);
+  await expectVerifyBlock(page, ["lending", "wbmb", "movn"]);
   expect(errors).toEqual([]);
 });
 
@@ -143,7 +143,7 @@ test("borrower posts a request with real-token bytecode through a browser wallet
   await open(page);
   await connect(page);
   await expect(page.locator("#wallet-balances")).toContainText(
-    "5,000 USDT · 50 WBMB",
+    "5,000 MOVN · 50 WBMB",
   );
   await page.locator("#open-offer").click();
   await page.locator('input[name="total"]').fill("90");
@@ -153,7 +153,7 @@ test("borrower posts a request with real-token bytecode through a browser wallet
     "내가 보내는 것: 1 WBMB",
   );
   await expect(page.locator("#confirm-body")).toContainText(
-    "담보 비율: 1 WBMB당 90 USDT",
+    "담보 비율: 1 WBMB당 90 MOVN",
   );
   await expect(page.locator("#confirm-body")).toContainText(
     "승인 대상 컨트랙트",
@@ -161,7 +161,7 @@ test("borrower posts a request with real-token bytecode through a browser wallet
   await commit(page, "거래 게시 완료");
   await page.locator('[data-tab="lend"]').click();
   await expect(page.locator('[data-offer="1"]')).toContainText(
-    "1 WBMB당 90 USDT",
+    "1 WBMB당 90 MOVN",
   );
   await expect(page.locator("#wallet-balances")).toContainText("49 WBMB");
 });
@@ -177,14 +177,14 @@ test("lender funds it, borrower repays in full and takes the collateral back", a
   await page.locator('[data-fill-amount="1"]').fill("90");
   await page.locator('[data-offer="1"] [data-action="fill"]').click();
   await commit(page, "부분 체결 완료");
-  await expect(page.locator("#wallet-balances")).toContainText("4,910 USDT");
+  await expect(page.locator("#wallet-balances")).toContainText("4,910 MOVN");
 
   const ctx = await browser.newContext();
   const b = await ctx.newPage();
   await wallet(b, 1);
   await open(b);
   await connect(b);
-  await expect(b.locator("#wallet-balances")).toContainText("5,090 USDT");
+  await expect(b.locator("#wallet-balances")).toContainText("5,090 MOVN");
   await b.locator('[data-tab="mine"]').click();
   await b.locator('[data-loan="1"] [data-action="repay"]').click();
   await commit(b, "상환 완료");
@@ -195,8 +195,8 @@ test("lender funds it, borrower repays in full and takes the collateral back", a
 
   await page.locator('[data-tab="mine"]').click();
   await page.locator("#refresh").click();
-  await page.locator('[data-action="claimUSDT"]').click();
-  await commit(page, "USDT 수령 완료");
+  await page.locator('[data-action="claimMOVN"]').click();
+  await commit(page, "MOVN 수령 완료");
   await page.locator('[data-tab="burn"]').click();
   await expect(page.locator("#cards")).toContainText("수수료 지갑");
 });

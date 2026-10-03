@@ -28,7 +28,7 @@ test("oracle-free market shows no price feed and a fee tab instead of burn", asy
   await expect(page.locator('[data-tab="burn"]')).toHaveText("수수료");
   await page.locator('[data-tab="lend"]').click();
   await expect(page.locator('[data-offer="1"]')).toContainText(
-    "1 WBMB당 90 USDT",
+    "1 WBMB당 90 MOVN",
   );
   await expect(page.locator('[data-offer="1"]')).toContainText("만기 미상환");
   await expect(page.locator('[data-offer="1"]')).toContainText("유예 1일");
@@ -54,10 +54,10 @@ test("lender funds a borrow request, borrower repays, fee goes to the fee wallet
     "배정 담보: 1 WBMB",
   );
   await expect(page.locator("#confirm-body")).toContainText(
-    "내가 보내는 것: 90 USDT",
+    "내가 보내는 것: 90 MOVN",
   );
   await expect(page.locator("#confirm-body")).toContainText(
-    "담보 비율: 1 WBMB당 90 USDT",
+    "담보 비율: 1 WBMB당 90 MOVN",
   );
   await expect(page.locator("#confirm-body")).toContainText("상환 기한");
   await commit(page, "부분 체결 완료");
@@ -81,7 +81,7 @@ test("lender funds a borrow request, borrower repays, fee goes to the fee wallet
   await page.locator('[data-loan="1"] [data-action="repay"]').click();
   await expect(page.locator("#confirm-body")).toContainText("수수료");
   await commit(page, "상환 완료");
-  await expect(page.locator('[data-loan="1"]')).toContainText("USDT 상환 완료");
+  await expect(page.locator('[data-loan="1"]')).toContainText("MOVN 상환 완료");
   await page.locator('[data-action="claimWBMB"]').click();
   await commit(page, "WBMB 수령 완료");
   await page.locator('[data-tab="burn"]').click();
@@ -107,7 +107,7 @@ test("borrower takes a lend offer at the maker's ratio, defaults, lender receive
     "내가 보내는 것: 3 WBMB",
   );
   await expect(page.locator("#confirm-body")).toContainText(
-    "내가 받는 것: 250 USDT",
+    "내가 받는 것: 250 MOVN",
   );
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();

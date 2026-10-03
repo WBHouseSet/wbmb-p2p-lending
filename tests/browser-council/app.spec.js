@@ -48,7 +48,7 @@ async function postDirect(
     maker,
   );
   const token = new Contract(
-    side === 1 ? config.addresses.usdt : config.addresses.wbmb,
+    side === 1 ? config.addresses.movn : config.addresses.wbmb,
     ["function approve(address,uint256) returns (bool)"],
     maker,
   );
@@ -73,7 +73,7 @@ async function marketWithoutPrice(provider, config, minGrace) {
     43200,
   ]);
   const lending = await deployContract("P2PLending", admin, [
-    config.addresses.usdt,
+    config.addresses.movn,
     config.addresses.wbmb,
     oracle.target,
     config.feeWallet,
@@ -171,17 +171,17 @@ test("the fill dialog tells a lender what settlement pays: debt plus the bonus, 
   await ready(page);
   await account(page, 2);
   await page.locator('[data-tab="lend"]').click();
-  // Seeded borrow request: 350 USDT against 10 WBMB.
+  // Seeded borrow request: 350 MOVN against 10 WBMB.
   await page.locator('[data-fill-amount="1"]').fill("350");
   await page.locator('[data-offer="1"] [data-action="fill"]').click();
   const body = page.locator("#confirm-body");
-  await expect(body).toContainText("내가 보내는 것: 350 USDT");
+  await expect(body).toContainText("내가 보내는 것: 350 MOVN");
   await expect(body).toContainText(
-    "내가 받는 것: 상환되면 원금과 이자(USDT), 정산되면 부채에 보너스 10%를 더한 만큼의 WBMB(담보가 모자라면 담보 전부)",
+    "내가 받는 것: 상환되면 원금과 이자(MOVN), 정산되면 부채에 보너스 10%를 더한 만큼의 WBMB(담보가 모자라면 담보 전부)",
   );
   await expect(body).not.toContainText("미상환이면 담보 WBMB");
   await expect(body).toContainText("청산선 70%");
-  await expect(body).toContainText("청산 가격: 50 USDT 이하");
+  await expect(body).toContainText("청산 가격: 50 MOVN 이하");
   await expect(body).toContainText("나머지 담보는 차입자에게 돌아갑니다");
   await page.locator("#confirm-cancel").click();
   await expect(page.locator("#status")).toContainText("거래를 취소했습니다");
@@ -202,7 +202,7 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   // 700 / (14 WBMB * 0.7) = 71.43, and settlement pays the lender the debt plus the on-chain bonus.
   await expect(page.locator("#confirm-body")).toContainText("청산선 70%");
   await expect(page.locator("#confirm-body")).toContainText(
-    "청산 가격: 71.43 USDT 이하",
+    "청산 가격: 71.43 MOVN 이하",
   );
   await expect(page.locator("#confirm-body")).toContainText(
     "부채에 보너스 10%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다",
@@ -219,7 +219,7 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   // debt 700 / (14 WBMB * 0.7) = 71.43
   // Fill happens at price 100, so the loan can lose 28.6% of the price before liquidation.
   // The seeded offer charges 10% APR, so a few seconds of interest may move the last digits.
-  await expect(liq(page, 1, "price")).toHaveText("71.43 USDT");
+  await expect(liq(page, 1, "price")).toHaveText("71.43 MOVN");
   await expect(liq(page, 1, "margin")).toHaveText(/^28\.[56]% 더 내리면 청산$/);
   await expect(page.locator('[data-loan="1"] .liq')).toHaveClass(/safe/);
   await setPrice(page, 70);
@@ -273,14 +273,14 @@ test("posting a lend offer uses the council margins, then a fill gets the 70% li
   await page.locator('[data-tab="borrow"]').click();
   await page.locator('[data-fill-amount="3"]').fill("90");
   await page.locator('[data-offer="3"] [data-action="fill"]').click();
-  // 90 USDT at 50% margin and price 100 needs 1.8 WBMB.
+  // 90 MOVN at 50% margin and price 100 needs 1.8 WBMB.
   await expect(page.locator("#confirm-body")).toContainText(
     "배정 담보: 1.8 WBMB",
   );
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();
   // The posted terms were 50% margin / 70% liquidation: 90 / (1.8 * 0.7) = 71.43.
-  await expect(liq(page, 2, "price")).toHaveText("71.43 USDT");
+  await expect(liq(page, 2, "price")).toHaveText("71.43 MOVN");
   await expect(page.locator('[data-loan="2"] .mode')).toContainText(
     "갚는 기한",
   );
@@ -357,7 +357,7 @@ test("offers posted straight to the contract with other margins are not listed; 
   await page.locator('[data-tab="mine"]').click();
   await page.locator(`[data-offer="${lendId}"] [data-action="close"]`).click();
   await commit(page, "미체결분 회수 완료");
-  await expect(page.locator(".claim-box")).toContainText("500 USDT");
+  await expect(page.locator(".claim-box")).toContainText("500 MOVN");
   // A standard offer of one's own carries no such label.
   await account(page, 2);
   await page.locator('[data-tab="mine"]').click();
@@ -375,7 +375,7 @@ test("a borrow request with too little collateral is refused by the form, and on
   await page.locator("#open-offer").click();
   await page.locator('#offer-form [name="total"]').fill("90");
   await page.locator('#offer-form [name="collateral"]').fill("0.01");
-  // 90 USDT at 50% of collateral value and price 100 needs 1.8 WBMB.
+  // 90 MOVN at 50% of collateral value and price 100 needs 1.8 WBMB.
   await expect(page.locator("#collateral-hint")).toContainText("최소 1.8 WBMB");
   await page.locator('#offer-form button[type="submit"]').click();
   await expect(page.locator("#status")).toContainText("담보가 부족합니다");
