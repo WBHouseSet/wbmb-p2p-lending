@@ -51,6 +51,35 @@ async function commit(page, done) {
   await expect(page.locator("#status")).toContainText(done, { timeout: 40000 });
 }
 
+// The "check it yourself" block: every address the page uses, linked to the explorer.
+async function expectVerifyBlock(page, keys) {
+  const config = await (await page.request.get("/deployment.json")).json();
+  const block = page.locator("#verify");
+  await expect(block).toBeVisible();
+  for (const key of keys) {
+    const address = config.addresses[key];
+    const link = block.locator(
+      `a[href="https://bscscan.com/address/${address}"]`,
+    );
+    await expect(link).toHaveText(address);
+  }
+  await expect(block.locator("#verify-addresses a")).toHaveCount(keys.length);
+  await expect(block.locator("#verify-source")).toHaveAttribute(
+    "href",
+    `https://repo.sourcify.dev/56/${config.addresses.lending}`,
+  );
+  await expect(block.locator("#verify-repo")).toHaveAttribute(
+    "href",
+    "https://github.com/WBHouseSet/wbmb-p2p-lending",
+  );
+  await expect(block.locator("#verify-contact")).toHaveAttribute(
+    "href",
+    "https://github.com/WBHouseSet/wbmb-p2p-lending/issues",
+  );
+  await expect(block).toContainText("시드 문구나 개인키를 묻지 않습니다");
+  await expect(block).toContainText("WBHouseSet");
+}
+
 test("live page warns about real funds and hides every demo control", async ({
   page,
 }) => {
@@ -65,6 +94,7 @@ test("live page warns about real funds and hides every demo control", async ({
   await expect(page.locator("#cards")).toContainText(
     "아직 열린 거래가 없습니다",
   );
+  await expectVerifyBlock(page, ["lending", "wbmb", "usdt"]);
   expect(errors).toEqual([]);
 });
 

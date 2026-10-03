@@ -190,23 +190,28 @@ export async function runCouncilLiveTest({
         );
         return { settled: false, secondsLeft: 0 };
       }
-      const collateral = (await lending.getLoan(state.loanB)).collateral;
-      const [claimL, claimB] = await Promise.all([
+      const loanBefore = await lending.getLoan(state.loanB);
+      const collateral = loanBefore.collateral;
+      const feeBps = await lending.feeBps();
+      const [claimL, claimB, claimFee] = await Promise.all([
         lending.claimableWBMB(L),
         lending.claimableWBMB(B),
+        lending.claimableWBMB(feeVault),
       ]);
       const receipt = await send(
         "정산 settle (누구나 호출 가능)",
         lending.connect(borrower).settle(state.loanB, opts),
       );
-      const settled = receipt.logs
+      const events = receipt.logs
         .filter((x) => x.address === lendingAddress)
-        .map((x) => lending.interface.parseLog(x))
-        .find((x) => x?.name === "Settled").args;
+        .map((x) => lending.interface.parseLog(x));
+      const settled = events.find((x) => x?.name === "Settled").args;
+      const fee =
+        events.find((x) => x?.name === "SettlementFee")?.args.feeWBMB ?? 0n;
       const toLender = settled.lenderWBMB,
         toBorrower = settled.borrowerWBMB;
       log(
-        `  = 부채 ${u(settled.debt)} USDT · 정산 가격 ${u(settled.price)} USDT → 대출자 ${w(toLender)} WBMB · 차입자 ${w(toBorrower)} WBMB`,
+        `  = 부채 ${u(settled.debt)} USDT · 정산 가격 ${u(settled.price)} USDT → 대출자 ${w(toLender)} WBMB · 차입자 ${w(toBorrower)} WBMB · 수수료 ${w(fee)} WBMB`,
       );
       expect(
         "대출 B 상태 = WBMB 정산 완료",
@@ -219,7 +224,25 @@ export async function runCouncilLiveTest({
         toLender,
         ceilDiv(settled.debt * (BPS + bonus) * WBMB_UNIT, settled.price * BPS),
       );
-      expect("차입자 몫 = 담보 − 대출자 몫", toBorrower, collateral - toLender);
+      // Recomputed here too: the repayment fee on the unpaid interest, at the settlement price, capped at the surplus.
+      const feeUsdt = ceilDiv(
+        (settled.debt - loanBefore.principal) * feeBps +
+          loanBefore.feeRemainder,
+        BPS,
+      );
+      const feeDue = ceilDiv(feeUsdt * WBMB_UNIT, settled.price);
+      expect(
+        `수수료 = 못 낸 이자의 ${Number(feeBps) / 100}% ÷ 가격 (남은 담보 한도)`,
+        fee,
+        feeDue < collateral - toLender ? feeDue : collateral - toLender,
+      );
+      expect(
+        "차입자 몫 = 담보 − 대출자 몫 − 수수료",
+        toBorrower,
+        collateral - toLender - fee,
+      );
+      // In this test the borrower's wallet may also be the fee wallet; then the fee lands in the same claim.
+      const feeToB = B === feeVault ? fee : 0n;
       if (toBorrower <= 0n)
         throw new Error("차입자에게 돌아간 담보가 없습니다.");
       expect(
@@ -230,8 +253,14 @@ export async function runCouncilLiveTest({
       expect(
         "차입자 수령 가능 WBMB 증가",
         (await lending.claimableWBMB(B)) - claimB,
-        toBorrower,
+        toBorrower + feeToB,
       );
+      if (!feeToB)
+        expect(
+          "수수료 지갑 수령 가능 WBMB 증가",
+          (await lending.claimableWBMB(feeVault)) - claimFee,
+          fee,
+        );
       let before_ = await wbmb.balanceOf(L);
       await send(
         "빌려준 쪽 담보 수령 claimWBMB",
@@ -250,7 +279,7 @@ export async function runCouncilLiveTest({
       expect(
         "빌린 지갑 WBMB 증가",
         (await wbmb.balanceOf(B)) - before_,
-        claimB + toBorrower,
+        claimB + toBorrower + feeToB,
       );
       await conserved();
       fs.renameSync(
@@ -264,6 +293,7 @@ export async function runCouncilLiveTest({
         loanB: state.loanB,
         toLender,
         toBorrower,
+        fee,
         debt: settled.debt,
         price: settled.price,
         gasSpent,

@@ -364,6 +364,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
       feeWallet: f.feeWallet,
       feeBps: 500,
       liquidationBonusBps: f.bonusBps,
+      settlementFee: true,
       addresses: {
         usdt: f.usdt.target,
         wbmb: f.wbmb.target,

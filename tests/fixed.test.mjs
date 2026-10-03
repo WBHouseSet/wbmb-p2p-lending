@@ -276,6 +276,8 @@ describe("oracle-free fixed-ratio market", () => {
     await tx(lending.connect(lender2).settle(loan)); // caller gets nothing
     assert.equal(await lending.claimableWBMB(await addr(lender)), wb(1.5));
     assert.equal(await lending.claimableWBMB(await addr(lender2)), 0n);
+    // No price and no surplus: this market charges no settlement fee.
+    assert.equal(await lending.claimableWBMB(await addr(feeWallet)), 0n);
     assert.equal(await lending.claimableUSDT(await addr(lender)), 0n);
     await assert.rejects(lending.settle(loan), /NOT_ACTIVE/);
     await assert.rejects(

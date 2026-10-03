@@ -213,7 +213,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
     await local.send("evm_revert", [snapshot]);
   });
 
-  it("after maturity + grace the lender gets debt + 10% and the borrower the rest", async () => {
+  it("after maturity + grace the lender gets debt + 10%, the fee wallet its fee and the borrower the rest", async () => {
     await advance(300 + 300);
     const dry = await run({ settle: true });
     assert.equal(dry.settled, false);
@@ -229,7 +229,10 @@ describe("council live test script rehearsal (local chain id 56, real token byte
       (debt * 11000n * 10n ** 8n + r.price * 10000n - 1n) / (r.price * 10000n);
     assert.equal(share, 1960n);
     assert.equal(r.toLender, share);
-    assert.equal(r.toBorrower, EACH + 1000n - share);
+    // 5% of five minutes of interest is far below one WBMB base unit, so the fee rounds up to exactly one.
+    assert.equal(r.fee, 1n);
+    assert.equal(r.toBorrower, EACH + 1000n - share - r.fee);
+    // Wallet 0 is both the borrower and the fee wallet here, so it ends with the surplus and the fee.
     assert.equal(await wbmb.balanceOf(at(1)), share);
     assert.equal(await wbmb.balanceOf(at(0)), parseUnits("0.0001", 8) - share);
     assert.equal(fs.existsSync(stateFile), false);

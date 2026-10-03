@@ -62,6 +62,7 @@ contract P2PLending is ReentrancyGuard {
     IERC20 public immutable usdt;
     IERC20 public immutable wbmb;
     IPricePolicy public immutable pricePolicy;
+    /// Receives USDT fees through flushFees and claims WBMB settlement fees itself, so it must be able to call claimWBMB.
     address public immutable feeVault;
     uint256 public immutable feeBps;
     /// Shortest loan and shortest grace this deployment accepts, in seconds. The grace floor binds
@@ -95,6 +96,7 @@ contract P2PLending is ReentrancyGuard {
     event CollateralAdded(uint256 indexed id, uint256 amount);
     event Repaid(uint256 indexed id, uint256 principal, uint256 interest, uint256 fee);
     event Settled(uint256 indexed id, uint256 lenderWBMB, uint256 borrowerWBMB, uint256 debt, uint256 price);
+    event SettlementFee(uint256 indexed id, uint256 feeWBMB);
     event Claimed(address indexed account, address indexed token, uint256 amount);
     event FeesFlushed(uint256 amount);
 
@@ -290,6 +292,10 @@ contract P2PLending is ReentrancyGuard {
         require(overdue || debt >= threshold, "HEALTHY");
         toLender = Math.min(l.collateral, Math.mulDiv(debt * (BPS + liquidationBonusBps), WBMB_UNIT, price * BPS, Math.Rounding.Ceil));
         toBorrower = l.collateral - toLender;
+        // The fee a full repayment would have carried on the unpaid interest, in WBMB at the settlement price. It comes
+        // out of the borrower's surplus only: the lender's share is never reduced, and no surplus means no fee.
+        uint256 fee = Math.ceilDiv((debt - l.principal) * feeBps + l.feeRemainder, BPS);
+        toBorrower -= Math.min(toBorrower, Math.mulDiv(fee, WBMB_UNIT, price, Math.Rounding.Ceil));
     }
 
     function settle(uint256 id) external nonReentrant {
@@ -297,8 +303,11 @@ contract P2PLending is ReentrancyGuard {
         Loan storage l = loans[id];
         l.status = Status.SettledInWBMB;
         activeCollateral -= l.collateral;
+        // Whatever the quote gave to neither side is the settlement fee; the fee wallet claims it like any WBMB claim.
+        uint256 fee = l.collateral - a - b;
         l.principal = 0; l.collateral = 0; l.interest = 0; l.interestRemainder = 0; l.feeRemainder = 0;
         _creditWBMB(l.lender, a); _creditWBMB(l.borrower, b);
+        if (fee > 0) { _creditWBMB(feeVault, fee); emit SettlementFee(id, fee); }
         emit Settled(id, a, b, debt, price);
     }
 

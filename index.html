@@ -133,6 +133,27 @@
           </button>
         </div>
       </details>
+      <section id="verify" class="verify" hidden>
+        <p class="eyebrow">CHECK IT YOURSELF</p>
+        <h2>직접 확인하기</h2>
+        <p>
+          이 화면이 쓰는 주소입니다. 지갑이 승인을 요청하는 주소가 아래 시장
+          컨트랙트와 같은지 확인하세요.
+        </p>
+        <dl id="verify-addresses"></dl>
+        <p class="verify-links">
+          <a id="verify-source" target="_blank" rel="noopener"
+            >검증된 소스 보기</a
+          >
+          <a id="verify-repo" target="_blank" rel="noopener">소스 저장소</a>
+          <a id="verify-contact" target="_blank" rel="noopener">문의 · 신고</a>
+        </p>
+        <p class="verify-warning">
+          이 사이트는 시드 문구나 개인키를 묻지 않습니다. 묻는 화면이 보이면
+          가짜입니다.
+        </p>
+        <small>운영 <span id="verify-operator"></span></small>
+      </section>
       <footer>
         <span id="footer-version">WBMB Commons · 로컬 프로토타입 v0.1</span
         ><span>공개 규칙. 분리된 담보. 개인키는 내 지갑에.</span>
@@ -170,8 +191,12 @@
           /></label>
           <label id="collateral-field"
             ><span id="collateral-label">맡길 담보 (WBMB)</span
-            ><input name="collateral" value="1" inputmode="decimal"
-          /></label>
+            ><input name="collateral" value="1" inputmode="decimal" /><small
+              id="collateral-hint"
+              class="field-hint"
+              hidden
+            ></small
+          ></label>
           <label
             >최소 참여액 (USDT)<input
               name="minFill"

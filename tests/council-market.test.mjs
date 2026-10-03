@@ -152,6 +152,92 @@ describe("council-price market", () => {
     assert.equal(q.toBorrower, wb(3.7));
   });
 
+  // 36.5% a year for 30 days on 600 USDT is exactly 18 USDT of interest; the repayment fee on it would be 0.9 USDT.
+  const feeOf = async (receipt) =>
+    receipt.logs
+      .filter((x) => x.address === f.lending.target)
+      .map((x) => f.lending.interface.parseLog(x))
+      .find((x) => x?.name === "SettlementFee")?.args;
+
+  it("settlement charges the repayment fee on the unpaid interest, in WBMB, out of the borrower's surplus", async () => {
+    const id = await loan600({ aprBps: 3650 });
+    await advance(30 * DAY + DAY);
+    await f.publishPrice(us(100));
+    const q = await f.lending.quoteSettlement(id);
+    assert.equal(q.debt, us(618));
+    assert.equal(q.toLender, wb(6.489)); // 618 × 1.05 / 100, untouched by the fee
+    assert.equal(q.toBorrower, wb(3.502)); // 10 − 6.489 − 0.9 / 100
+    const receipt = await tx(f.lending.connect(f.lender2).settle(id));
+    assert.deepEqual([...(await feeOf(receipt))], [id, wb(0.009)]);
+    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(6.489));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[1]), wb(3.502));
+    assert.equal(await f.lending.claimableWBMB(f.feeWallet), wb(0.009));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[3]), 0n);
+    await conserved();
+    // The fee wallet takes it out like any other WBMB claim.
+    const before_ = await f.wbmb.balanceOf(f.feeWallet);
+    await tx(f.lending.connect(f.admin).claimWBMB());
+    assert.equal((await f.wbmb.balanceOf(f.feeWallet)) - before_, wb(0.009));
+    await conserved();
+  });
+
+  it("the settlement fee never eats into the lender's share: it is capped at what the borrower has left", async () => {
+    const id = await loan600({ aprBps: 3650 });
+    await advance(30 * DAY + DAY);
+    await f.publishPrice(us(64.9)); // lender 648.9 / 64.9 = 9.99845…, fee 0.9 / 64.9 = 0.0138… > what is left
+    const q = await f.lending.quoteSettlement(id);
+    const toLender = (us(648.9) * 10n ** 8n + us(64.9) - 1n) / us(64.9);
+    assert.equal(q.toLender, toLender);
+    assert.equal(q.toBorrower, 0n);
+    await tx(f.lending.settle(id));
+    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), toLender);
+    assert.equal(await f.lending.claimableWBMB(f.addresses[1]), 0n);
+    assert.equal(await f.lending.claimableWBMB(f.feeWallet), wb(10) - toLender);
+    await conserved();
+  });
+
+  it("no surplus, no settlement fee and no fee event", async () => {
+    const id = await loan600({ aprBps: 3650 });
+    await advance(30 * DAY + DAY);
+    await f.publishPrice(us(60)); // 10 WBMB are worth 600 < 648.9
+    const receipt = await tx(f.lending.settle(id));
+    assert.equal(await feeOf(receipt), undefined);
+    assert.equal(await f.lending.claimableWBMB(f.addresses[2]), wb(10));
+    assert.equal(await f.lending.claimableWBMB(f.feeWallet), 0n);
+    await conserved();
+  });
+
+  it("interest already paid with its fee is not charged again at settlement", async () => {
+    const id = await loan600({ aprBps: 3650 });
+    await advance(30 * DAY); // matured: all 18 USDT of interest accrued
+    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(100)));
+    await tx(f.lending.connect(f.borrower).repay(id, 0, us(100))); // interest only
+    assert.equal(await f.lending.feeBalance(), us(0.9));
+    await advance(DAY);
+    await f.publishPrice(us(100));
+    const q = await f.lending.quoteSettlement(id);
+    assert.deepEqual(
+      [q.debt, q.toLender, q.toBorrower],
+      [us(600), wb(6.3), wb(3.7)],
+    );
+    await tx(f.lending.settle(id));
+    assert.equal(await f.lending.claimableWBMB(f.feeWallet), 0n);
+    await conserved();
+  });
+
+  it("a settlement at the last price charges the fee at that price", async () => {
+    const id = await loan600({ aprBps: 3650 });
+    await f.publishPrice(us(90));
+    await advance(30 * DAY + DAY + 7 * DAY);
+    const q = await f.lending.quoteSettlement(id);
+    assert.equal(q.price, us(90));
+    assert.equal(q.toLender, wb(7.21)); // 618 × 1.05 / 90
+    assert.equal(q.toBorrower, wb(2.78)); // 10 − 7.21 − 0.9 / 90
+    await tx(f.lending.settle(id));
+    assert.equal(await f.lending.claimableWBMB(f.feeWallet), wb(0.01));
+    await conserved();
+  });
+
   it("stale price: settlement waits, repay and top-up still work", async () => {
     const id = await loan600();
     await advance(6 * DAY); // price expired, loan not yet due
@@ -360,17 +446,25 @@ describe("council-price market", () => {
     // The division really is inexact and the collateral really is enough, so the ceiling is what is tested.
     assert.notEqual(numerator % (price * BPS), 0n);
     assert.ok(toLender < collateral);
+    // The settlement fee: what a full repayment would have charged on the still unpaid interest, at this price.
+    const feeUsdt = ceilDiv(
+      (debt - left) * FEE + ((interestPaid * FEE) % BPS),
+      BPS,
+    );
+    const feeWbmb = ceilDiv(feeUsdt * UNIT, price);
+    assert.ok(feeWbmb > 0n && toLender + feeWbmb < collateral);
     const q = await f.lending.quoteSettlement(id);
     assert.equal(q.debt, debt);
     assert.equal(q.price, price);
     assert.equal(q.toLender, toLender);
-    assert.equal(q.toLender + q.toBorrower, collateral);
+    assert.equal(q.toBorrower, collateral - toLender - feeWbmb);
     await tx(f.lending.connect(f.lender2).settle(id));
     assert.equal(await f.lending.claimableWBMB(lender), toLender);
     assert.equal(
       await f.lending.claimableWBMB(borrower),
-      collateral - toLender,
+      collateral - toLender - feeWbmb,
     );
+    assert.equal(await f.lending.claimableWBMB(f.feeWallet), feeWbmb);
     assert.equal(await f.lending.claimableWBMB(f.addresses[3]), 0n);
     await conserved();
 
@@ -379,10 +473,15 @@ describe("council-price market", () => {
     await tx(f.lending.connect(f.lender).claimWBMB());
     await tx(f.lending.connect(f.lender).claimUSDT());
     await tx(f.lending.connect(f.borrower).claimWBMB());
+    await tx(f.lending.connect(f.admin).claimWBMB());
     await conserved();
     await tx(f.lending.flushFees());
     assert.equal(await f.wbmb.balanceOf(lender), wb(100) + toLender);
-    assert.equal(await f.wbmb.balanceOf(borrower), wb(100) - toLender);
+    assert.equal(
+      await f.wbmb.balanceOf(borrower),
+      wb(100) - toLender - feeWbmb,
+    );
+    assert.equal(await f.wbmb.balanceOf(f.feeWallet), wb(100) + feeWbmb);
     assert.equal(
       await f.usdt.balanceOf(lender),
       us(10000) - principal + part + interestPaid,

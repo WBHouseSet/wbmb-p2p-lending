@@ -385,6 +385,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(web.oracleFree, undefined);
     assert.equal(web.addresses.oracle, record.pricePolicy);
     assert.equal(web.liquidationBonusBps, 1000);
+    assert.deepEqual([record.settlementFee, web.settlementFee], [true, true]);
     // The pin of a council record names the price contract, and the RPC endpoint as well.
     assert.equal(livePinned(record).oracle, record.pricePolicy);
     assert.equal(livePinned(record).rpcUrl, web.rpcUrl);

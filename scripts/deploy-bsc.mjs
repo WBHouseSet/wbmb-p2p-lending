@@ -340,6 +340,8 @@ export async function deployBsc({
       staleSettleDelay: Number(args[8]),
       ...(cp
         ? {
+            // This build charges the fee at settlement too; older records lack the flag and the page stays silent.
+            settlementFee: true,
             policyTxHash,
             council: {
               reporter: getAddress(reporter),
@@ -382,7 +384,11 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
     version: council ? 3 : 2,
     demo: false,
     ...(council
-      ? { policy: "council", liquidationBonusBps: record.liquidationBonusBps }
+      ? {
+          policy: "council",
+          liquidationBonusBps: record.liquidationBonusBps,
+          settlementFee: record.settlementFee === true,
+        }
       : { oracleFree: true }),
     chainId: record.chainId,
     rpcUrl,

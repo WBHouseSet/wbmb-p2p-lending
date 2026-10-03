@@ -148,6 +148,16 @@ test("council market shows the council price, a fee tab and the fixed margins", 
   await expect(terms).toContainText("대출자는 빚 + 10%어치의 WBMB");
   await expect(terms).toContainText("만기 + 유예 1일");
   await expect(terms).toContainText("이자의 5%");
+  await expect(terms).toContainText(
+    "정산될 때는 못 낸 이자의 5%를 남은 담보에서 WBMB로 뗌",
+  );
+  // The fee tab says where settlement fees go and shows what the fee wallet can collect.
+  await page.locator('[data-tab="burn"]').click();
+  await expect(page.locator("#tab-description")).toContainText(
+    "정산으로 끝난 대출은 못 낸 이자의 5%가 WBMB로 쌓입니다",
+  );
+  await expect(page.locator("#cards")).toContainText("정산 수수료 · WBMB");
+  await page.locator('[data-tab="borrow"]').click();
   await expect(page.locator('[data-offer="2"]')).not.toContainText("담보 여유");
   await expect(page.locator('[data-offer="2"]')).not.toContainText(
     "비표준 조건",
@@ -197,6 +207,9 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   await expect(page.locator("#confirm-body")).toContainText(
     "부채에 보너스 10%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다",
   );
+  await expect(page.locator("#confirm-body")).toContainText(
+    "이때 못 낸 이자의 5%가 수수료로 돌려받을 담보에서 빠집니다",
+  );
   await commit(page, "부분 체결 완료");
   await page.locator('[data-tab="mine"]').click();
   // The lender's share is named as going to the lender, the rest to the borrower.
@@ -230,6 +243,10 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
     /차입자 반환 (1|0\.9999\d+) WBMB/,
   );
   await expect(page.locator("#confirm-body")).toContainText("보너스 10%");
+  // A few seconds of unpaid interest: a fee of a few WBMB base units, shown as its own line.
+  await expect(page.locator("#confirm-body")).toContainText(
+    /수수료 0\.0000\d+ WBMB \(못 낸 이자의 5%\)/,
+  );
   await commit(page, "WBMB 정산 완료");
   await expect(page.locator(".claim-box")).toContainText(/(1|0\.9999\d+) WBMB/);
 });
@@ -348,6 +365,48 @@ test("offers posted straight to the contract with other margins are not listed; 
   await expect(page.locator('[data-offer="2"]')).not.toContainText(
     "비표준 조건",
   );
+});
+
+test("a borrow request with too little collateral is refused by the form, and one already on chain says why it cannot be filled", async ({
+  page,
+}) => {
+  await ready(page);
+  await account(page, 3);
+  await page.locator("#open-offer").click();
+  await page.locator('#offer-form [name="total"]').fill("90");
+  await page.locator('#offer-form [name="collateral"]').fill("0.01");
+  // 90 USDT at 50% of collateral value and price 100 needs 1.8 WBMB.
+  await expect(page.locator("#collateral-hint")).toContainText("최소 1.8 WBMB");
+  await page.locator('#offer-form button[type="submit"]').click();
+  await expect(page.locator("#status")).toContainText("담보가 부족합니다");
+  await expect(page.locator("#status")).toContainText("최소 1.8 WBMB");
+  await expect(page.locator("#confirm-dialog")).not.toBeVisible();
+  // Enough collateral clears the warning and goes on to the confirmation.
+  await page.locator('#offer-form [name="collateral"]').fill("1.8");
+  await expect(page.locator("#collateral-hint")).not.toHaveClass(/warning/);
+  await page.locator('#offer-form button[type="submit"]').click();
+  await expect(page.locator("#confirm-dialog")).toBeVisible();
+  await page.locator("#confirm-cancel").click();
+  // The contract itself accepts such a request, so one can already be on chain.
+  const config = await deployment(page);
+  const id = await onChain((provider) =>
+    postDirect(provider, config, 3, 0, us(90), wb("0.01"), STANDARD),
+  );
+  await account(page, 2);
+  await page.locator('[data-tab="lend"]').click();
+  const card = page.locator(`[data-offer="${id}"]`);
+  await expect(card).toContainText("담보 부족");
+  await expect(card).toContainText("최소 1.8 WBMB");
+  await expect(card.locator('[data-action="fill"]')).toHaveCount(0);
+  // A covered request shows what is pledged and can be filled as before.
+  await expect(offerCell(page, 1, "맡긴 담보")).toContainText("WBMB");
+  await expect(
+    page.locator('[data-offer="1"] [data-action="fill"]'),
+  ).toBeVisible();
+  // The poster is told how to fix it.
+  await account(page, 3);
+  await page.locator('[data-tab="mine"]').click();
+  await expect(card).toContainText("회수한 뒤 담보를 늘려 다시 올리세요");
 });
 
 test("before the first price report the page says so, shows no number and blocks fills", async ({

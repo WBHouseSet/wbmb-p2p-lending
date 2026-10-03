@@ -23,6 +23,7 @@ test("read-only marketplace and mobile layout do not require wallet or private k
   page.on("pageerror", (e) => errors.push(e.message));
   await ready(page);
   await expect(page.locator("h1")).toContainText("조건은 우리가");
+  await expect(page.locator("#verify")).toBeHidden();
   await expect(page.locator("[data-offer='2']")).toContainText("빌려드려요");
   await page.locator("#open-offer").click();
   await expect(page.locator("#status")).toContainText("먼저");

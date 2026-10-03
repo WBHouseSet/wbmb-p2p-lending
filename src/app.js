@@ -56,12 +56,17 @@ const LIVE_CHAINS = {
     blockExplorerUrls: ["https://bscscan.com"],
   },
 };
+// Who runs the page and where its source is, shown on a live page so a visitor can check both.
+const OPERATOR = "WBHouseSet";
+const REPO_URL = "https://github.com/WBHouseSet/wbmb-p2p-lending";
 // Oracle-free market: maker-fixed collateral, maturity-only settlement, no price feed.
 const fixed = () => config?.oracleFree === true;
 // Council-price market: collateral and liquidation follow the relayed Mobick council price.
 const council = () => config?.policy === "council";
 // Markets whose fees go to a plain fee wallet (no burner contract).
 const vault = () => fixed() || council();
+// Markets deployed before the settlement fee existed carry no flag; the page must not promise a fee they do not charge.
+const settleFee = () => council() && config?.settlementFee === true;
 // The one set of terms the council page posts and lists. The contract accepts other margins
 // (any haircut from 1% to 90% with a liquidation line above 1 - haircut), so offers with other
 // terms can exist; the page keeps them off the market tabs and does not fill them.
@@ -84,6 +89,8 @@ let bonusPct = "0";
 let priceSet = true;
 let priceLive = true;
 let currentPrice = 0n;
+// The price the contract sizes collateral with (the week's opening price while the price is live).
+let openingPrice = 0n;
 let staleDelay = "";
 // The market's shortest grace, read from the chain (council market only).
 let minGraceText = "";
@@ -106,6 +113,40 @@ const durationText = (seconds) => {
 const liquidationPrice = (l) =>
   (l.debt * 10000n * 100000000n) /
   (l.collateral * BigInt(l.terms.liquidationBps));
+// The contract's own test for filling a borrow request (quoteFill): the loan must fit under the
+// lending limit at the opening price and, with interest to maturity, under the liquidation line now.
+const collateralCovers = (amount, collateral, terms) => {
+  const value = (price) => (collateral * price) / 100000000n;
+  if (
+    amount >
+    (value(openingPrice) * (10000n - BigInt(terms.haircutBps))) / 10000n
+  )
+    return false;
+  const year = 10000n * 31536000n;
+  const atMaturity =
+    amount +
+    (amount * BigInt(terms.aprBps) * BigInt(terms.duration) + year - 1n) / year;
+  return (
+    atMaturity < (value(currentPrice) * BigInt(terms.liquidationBps)) / 10000n
+  );
+};
+// The least WBMB (base units) a borrow request for `amount` USDT must pledge to be fillable at today's price.
+const minCollateral = (amount, terms) => {
+  const year = 10000n * 31536000n;
+  const atMaturity =
+    amount +
+    (amount * BigInt(terms.aprBps) * BigInt(terms.duration) + year - 1n) / year;
+  const forLimit =
+    (amount * 100000000n * 10000n) /
+    (openingPrice * (10000n - BigInt(terms.haircutBps)));
+  const forLine =
+    (atMaturity * 100000000n * 10000n) /
+    (currentPrice * BigInt(terms.liquidationBps));
+  let c = forLimit > forLine ? forLimit : forLine;
+  // The divisions above round down; the contract's rounding costs a unit or two more.
+  for (let i = 0; i < 8 && !collateralCovers(amount, c, terms); i++) c += 1n;
+  return c;
+};
 // A price shown to two decimals, rounded up: a liquidation price must never read lower than it is.
 const priceUp = (n) =>
   (Number((n + 10n ** 16n - 1n) / 10n ** 16n) / 100).toLocaleString("ko-KR", {
@@ -157,7 +198,10 @@ const councilTermsHtml = () => {
       "정산되면",
       `대출자는 빚 + ${bonusPct}%어치의 WBMB, 남은 담보는 빌린 사람에게`,
     ],
-    ["수수료", `이자의 ${feePct}% (빌린 사람이 이자에 더해 냄)`],
+    [
+      "수수료",
+      `이자의 ${feePct}% (빌린 사람이 이자에 더해 냄)${settleFee() ? `. 정산될 때는 못 낸 이자의 ${feePct}%를 남은 담보에서 WBMB로 뗌` : ""}`,
+    ],
   ];
   return `<dl class="terms">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl><p class="terms-foot">가격은 모빅 카운슬 가격을 따릅니다. ${staleNote()}</p>`;
 };
@@ -192,6 +236,25 @@ let offers = [],
   latest = 0,
   more = false;
 const wallets = [];
+// What survives a reload: how the wallet was connected (this browser) and the open tab (this
+// browser tab). Storage can be blocked; the page then simply starts fresh.
+const WALLET_KEY = "wbmb.wallet",
+  TAB_KEY = "wbmb.tab";
+const remember = (store, key, value) => {
+  try {
+    if (value === null) window[store].removeItem(key);
+    else window[store].setItem(key, value);
+  } catch {
+    // nothing is remembered
+  }
+};
+const recall = (store, key) => {
+  try {
+    return window[store].getItem(key);
+  } catch {
+    return null;
+  }
+};
 
 function announce(event) {
   const detail = event.detail;
@@ -214,6 +277,10 @@ function renderWallets() {
     .join("");
   $("#wallet-provider").hidden = wallets.length < 2;
 }
+const readyText = () =>
+  config.demo
+    ? "로컬 체인 준비 완료 · 체험 지갑을 선택하면 바로 거래할 수 있습니다."
+    : "BNB Smart Chain 연결 완료 · 지갑을 연결하면 거래할 수 있습니다.";
 function status(message, type = "") {
   $("#status").textContent = message;
   $("#status").className = type;
@@ -297,7 +364,26 @@ function confirm(title, message) {
     };
   });
 }
+// Phone wallets announce their account and network right after a QR connection is approved,
+// and some repeat it later. Only a real change ends the session: another account, or another network.
+function onAccountsChanged(accounts) {
+  const next = String(accounts?.[0] ?? "")
+    .split(":")
+    .pop();
+  // Before the page has read the account there is nothing to invalidate; it reads the current one itself.
+  if (!address || next.toLowerCase() === address.toLowerCase()) return;
+  invalidateWallet();
+}
+function onChainChanged(id) {
+  try {
+    if (BigInt(id) === BigInt(config.chainId)) return;
+  } catch {
+    // not a number: treat as a change
+  }
+  invalidateWallet();
+}
 function invalidateWallet() {
+  remember("localStorage", WALLET_KEY, null);
   dropWallet();
   revision++;
   signer = null;
@@ -387,61 +473,99 @@ async function connectWallet() {
 async function attachWallet(selected, label) {
   dropWallet();
   wallet = selected;
-  selected.on?.("accountsChanged", invalidateWallet);
-  selected.on?.("chainChanged", invalidateWallet);
+  selected.on?.("accountsChanged", onAccountsChanged);
+  selected.on?.("chainChanged", onChainChanged);
   selected.on?.("disconnect", invalidateWallet);
   const provider = new BrowserProvider(selected, "any");
   provider.pollingInterval = config.demo ? 100 : 3000;
   $("#demo-account").value = "";
   await useSigner(await provider.getSigner(), label);
+  remember(
+    "localStorage",
+    WALLET_KEY,
+    selected.isWalletConnect
+      ? "qr"
+      : `browser:${wallets.find((w) => w.provider === selected)?.info?.rdns ?? ""}`,
+  );
+}
+// After a reload the last connection is picked up again without a prompt: a browser wallet is
+// only asked which accounts this site may already see, a QR session is read back from storage.
+async function restoreWallet() {
+  const kind = recall("localStorage", WALLET_KEY);
+  if (!kind || (kind === "qr" && !WC_PROJECT_ID)) return;
+  try {
+    if (kind === "qr") {
+      const provider = await qrProvider();
+      if (!provider.session || !provider.accounts?.length)
+        throw new Error("no session");
+      await attachWallet(provider, "연결된 지갑 (QR)");
+      return;
+    }
+    const rdns = kind.slice("browser:".length);
+    const index = wallets.findIndex((w) =>
+      rdns ? w.info?.rdns === rdns : w.provider === window.ethereum,
+    );
+    const selected = wallets[index]?.provider || window.ethereum;
+    const accounts = await selected?.request({ method: "eth_accounts" });
+    if (!accounts?.length) throw new Error("no account");
+    if (index >= 0) $("#wallet-provider").value = String(index);
+    await attachWallet(selected, "연결된 지갑");
+  } catch {
+    // The wallet is locked, gone or on another network: start disconnected, as before.
+    invalidateWallet();
+    status(readyText(), "success");
+  }
 }
 // Stops listening to the current wallet; a WalletConnect session is ended as well.
 function dropWallet() {
   if (!wallet) return;
-  wallet.removeListener?.("accountsChanged", invalidateWallet);
-  wallet.removeListener?.("chainChanged", invalidateWallet);
+  wallet.removeListener?.("accountsChanged", onAccountsChanged);
+  wallet.removeListener?.("chainChanged", onChainChanged);
   wallet.removeListener?.("disconnect", invalidateWallet);
   if (wallet.isWalletConnect) wallet.disconnect?.().catch(() => {});
   wallet = null;
+}
+// Rejects when the WalletConnect service does not answer, instead of waiting forever.
+const within = (promise, what) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `QR 연결 서버가 응답하지 않습니다 (${what}). 잠시 뒤 다시 시도하세요.`,
+            ),
+          ),
+        20000,
+      ),
+    ),
+  ]);
+// The WalletConnect provider for this market. It carries the session of an earlier visit, if any.
+async function qrProvider() {
+  const { EthereumProvider } = await import("@walletconnect/ethereum-provider");
+  return within(
+    EthereumProvider.init({
+      projectId: WC_PROJECT_ID,
+      optionalChains: [Number(config.chainId)],
+      rpcMap: { [Number(config.chainId)]: config.rpcUrl },
+      showQrModal: false,
+      metadata: {
+        name: "WBMB Commons",
+        description: "WBMB 담보 P2P 대출",
+        url: location.origin,
+        icons: [],
+      },
+    }),
+    "준비",
+  );
 }
 // QR connection for a phone wallet (WalletConnect). The page shows the pairing code itself;
 // the wallet app scans it, and every transaction is then approved on the phone.
 async function connectByQr() {
   if (busy) return;
   status("QR 연결을 준비하는 중입니다…");
-  const [{ EthereumProvider }, QR] = await Promise.all([
-    import("@walletconnect/ethereum-provider"),
-    import("qrcode"),
-  ]);
-  // Rejects when the WalletConnect service does not answer, instead of waiting forever.
-  const within = (promise, what) =>
-    Promise.race([
-      promise,
-      new Promise((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                `QR 연결 서버가 응답하지 않습니다 (${what}). 잠시 뒤 다시 시도하세요.`,
-              ),
-            ),
-          20000,
-        ),
-      ),
-    ]);
-  const initializing = EthereumProvider.init({
-    projectId: WC_PROJECT_ID,
-    optionalChains: [Number(config.chainId)],
-    rpcMap: { [Number(config.chainId)]: config.rpcUrl },
-    showQrModal: false,
-    metadata: {
-      name: "WBMB Commons",
-      description: "WBMB 담보 P2P 대출",
-      url: location.origin,
-      icons: [],
-    },
-  });
-  const provider = await within(initializing, "준비");
+  const [provider, QR] = await Promise.all([qrProvider(), import("qrcode")]);
   const dialog = $("#qr-dialog");
   const shown = new Promise((resolve) => provider.once("display_uri", resolve));
   provider.on("display_uri", async (uri) => {
@@ -571,6 +695,7 @@ async function refresh() {
       priceLive = priceSet && latest <= Number(validUntil);
       const [opening] = priceLive ? await contracts.oracle.prices() : [current];
       currentPrice = current;
+      openingPrice = opening;
       $("#week-price").textContent = priceSet ? fmt(opening) : "—";
       $("#current-price").textContent = priceSet ? fmt(current) : "—";
       $("#price-state").textContent = !priceSet
@@ -655,6 +780,7 @@ async function refresh() {
       ]);
       $("#wallet-balances").textContent = `${fmt(u)} USDT · ${fmt(w, 8)} WBMB`;
     }
+    syncCollateralHint();
     await render();
   } finally {
     loading = false;
@@ -666,7 +792,18 @@ function offerCard(o) {
   const minimum = o.remaining < o.minFill ? o.remaining : o.minFill;
   // Only reachable in "내 거래": the market tabs never list a non-standard council offer.
   const odd = council() && !standardCouncilOffer(o);
-  return `<article class="card" data-offer="${o.id}"><div class="card-top"><span class="badge ${o.side === 0 ? "neutral" : ""}">${o.side === 0 ? "빌리고 싶어요" : "빌려드려요"}${odd ? " · 비표준 조건" : ""}</span><span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><h3>${fmt(o.remaining)} <small>USDT</small></h3><span class="sub">${active ? "남은 참여 가능 금액" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span><dl><div><dt>고정 연이율</dt><dd>${percent(o.terms.aprBps)}% APR</dd></div><div><dt>대출 기간</dt><dd>${durationText(o.terms.duration)}</dd></div><div><dt>최소 참여</dt><dd>${fmt(minimum)} USDT</dd></div>${fixed() ? `<div><dt>담보 비율</dt><dd>${ratioText(o)}</dd></div>` : council() && !odd ? "" : `<div><dt>${council() ? "담보 여유" : "헤어컷"}</dt><dd>${percent(o.terms.haircutBps)}%</dd></div>${council() ? `<div><dt>청산선</dt><dd>${percent(o.terms.liquidationBps)}%</dd></div>` : ""}`}</dl><div class="mode">${council() && !odd ? "" : `${modeText(o.terms.mode)}<br>만기 후 유예 ${durationText(o.terms.grace)} · `}게시 만료 ${date(o.expiresAt)}${odd ? `<br>이 화면의 표준 조건(담보 여유 ${percent(COUNCIL_TERMS.haircutBps)}% · 청산선 ${councilLine()}% · 유예 ${councilGrace()})과 달라 시장 목록에 나오지 않고 이 화면에서 체결되지 않습니다.` : ""}</div>${active && !own ? `<div class="input-row"><input data-fill-amount="${o.id}" aria-label="거래 ${o.id} 참여 금액" value="${formatUnits(minimum, 18)}" inputmode="decimal" /><button class="button primary" data-action="fill" data-id="${o.id}">${o.side === 0 ? "빌려주기" : "빌리기"}</button></div>` : ""}${own && !o.closed ? `<div class="row-actions"><button class="button outline small" data-action="close" data-id="${o.id}">미체결분 회수</button></div>` : ""}</article>`;
+  // A standard borrow request whose collateral no longer (or never did) cover it: the contract refuses every fill.
+  const short_ =
+    council() &&
+    !odd &&
+    o.side === 0 &&
+    active &&
+    priceLive &&
+    !collateralCovers(o.total, o.collateralTotal, o.terms);
+  const shortNote = short_
+    ? `<p class="note warning">담보 부족 · 지금 카운슬 가격에서는 체결할 수 없습니다. ${fmt(o.total)} USDT 요청에는 담보가 최소 ${full(minCollateral(o.total, o.terms), 8)} WBMB 필요한데 ${full(o.collateralTotal, 8)} WBMB만 맡겨져 있습니다.${own ? " 미체결분을 회수한 뒤 담보를 늘려 다시 올리세요." : ""}</p>`
+    : "";
+  return `<article class="card" data-offer="${o.id}"><div class="card-top"><span class="badge ${o.side === 0 ? "neutral" : ""}">${o.side === 0 ? "빌리고 싶어요" : "빌려드려요"}${odd ? " · 비표준 조건" : ""}</span><span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><h3>${fmt(o.remaining)} <small>USDT</small></h3><span class="sub">${active ? "남은 참여 가능 금액" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span><dl><div><dt>고정 연이율</dt><dd>${percent(o.terms.aprBps)}% APR</dd></div><div><dt>대출 기간</dt><dd>${durationText(o.terms.duration)}</dd></div><div><dt>최소 참여</dt><dd>${fmt(minimum)} USDT</dd></div>${fixed() ? `<div><dt>담보 비율</dt><dd>${ratioText(o)}</dd></div>` : council() && !odd ? (o.side === 0 ? `<div><dt>맡긴 담보</dt><dd>${fmt(o.collateralRemaining, 8, 8)} WBMB</dd></div>` : "") : `<div><dt>${council() ? "담보 여유" : "헤어컷"}</dt><dd>${percent(o.terms.haircutBps)}%</dd></div>${council() ? `<div><dt>청산선</dt><dd>${percent(o.terms.liquidationBps)}%</dd></div>` : ""}`}</dl><div class="mode">${council() && !odd ? "" : `${modeText(o.terms.mode)}<br>만기 후 유예 ${durationText(o.terms.grace)} · `}게시 만료 ${date(o.expiresAt)}${odd ? `<br>이 화면의 표준 조건(담보 여유 ${percent(COUNCIL_TERMS.haircutBps)}% · 청산선 ${councilLine()}% · 유예 ${councilGrace()})과 달라 시장 목록에 나오지 않고 이 화면에서 체결되지 않습니다.` : ""}</div>${shortNote}${active && !own && !short_ ? `<div class="input-row"><input data-fill-amount="${o.id}" aria-label="거래 ${o.id} 참여 금액" value="${formatUnits(minimum, 18)}" inputmode="decimal" /><button class="button primary" data-action="fill" data-id="${o.id}">${o.side === 0 ? "빌려주기" : "빌리기"}</button></div>` : ""}${own && !o.closed ? `<div class="row-actions"><button class="button outline small" data-action="close" data-id="${o.id}">미체결분 회수</button></div>` : ""}</article>`;
 }
 function loanCard(l) {
   const isBorrower = address?.toLowerCase() === l.borrower.toLowerCase();
@@ -688,7 +825,7 @@ async function render() {
     lend: "WBMB를 담보로 맡기는 사람들의 요청입니다. 조건을 확인하고 USDT로 일부 참여하세요.",
     mine: "내 게시글, 체결된 대출, 지금 수령할 수 있는 자산을 확인합니다.",
     burn: vault()
-      ? `차입자가 낸 이자의 ${feePct}%가 별도 수수료로 쌓입니다. 현재는 소각하지 않고 아래 수수료 지갑으로 보관합니다.`
+      ? `차입자가 낸 이자의 ${feePct}%가 별도 수수료로 쌓입니다.${settleFee() ? ` 정산으로 끝난 대출은 못 낸 이자의 ${feePct}%가 WBMB로 쌓입니다.` : ""} 현재는 소각하지 않고 아래 수수료 지갑으로 보관합니다.`
       : "지급된 이자의 별도 수수료만 소각 재원으로 사용합니다. 개발자에게 배분하지 않습니다.",
   };
   $("#tab-description").textContent = descriptions[tab];
@@ -727,11 +864,15 @@ async function render() {
         myOffers.map(offerCard).join("");
     }
   } else if (vault()) {
-    const [pending, held] = await Promise.all([
+    const [pending, held, settled] = await Promise.all([
       contracts.lending.feeBalance(),
       contracts.usdt.balanceOf(config.feeWallet),
+      settleFee() ? contracts.lending.claimableWBMB(config.feeWallet) : 0n,
     ]);
-    html = `<div class="burn-stats"><article class="card"><span class="sub">컨트랙트에 쌓인 수수료 · USDT</span><strong>${fmt(pending, 18, 8)}</strong><div class="row-actions"><button class="button outline small" data-action="flush" ${pending === 0n ? "disabled" : ""}>수수료 지갑으로 이동</button></div></article><article class="card"><span class="sub">수수료 지갑 · ${esc(short(config.feeWallet))}</span><strong>${fmt(held, 18, 8)}</strong><p class="sub">지갑의 USDT 잔액 전체 (수수료 외 금액 포함 가능)</p></article></div><p class="burn-description">수수료 지갑 주소는 컨트랙트 생성 시 고정되어 바꿀 수 없습니다. 누구나 이동을 실행할 수 있지만 받는 곳은 항상 이 지갑입니다. 수수료는 소각되지 않으며 운영자가 보관합니다. 대출자 원금·이자와 담보는 수수료 지갑으로 이동할 수 없습니다.</p>`;
+    const settledCard = settleFee()
+      ? `<article class="card"><span class="sub">정산 수수료 · WBMB</span><strong>${fmt(settled, 8, 8)}</strong><p class="sub">수수료 지갑이 직접 수령합니다 (그 지갑이 받을 다른 WBMB 포함 가능)</p></article>`
+      : "";
+    html = `<div class="burn-stats"><article class="card"><span class="sub">컨트랙트에 쌓인 수수료 · USDT</span><strong>${fmt(pending, 18, 8)}</strong><div class="row-actions"><button class="button outline small" data-action="flush" ${pending === 0n ? "disabled" : ""}>수수료 지갑으로 이동</button></div></article><article class="card"><span class="sub">수수료 지갑 · ${esc(short(config.feeWallet))}</span><strong>${fmt(held, 18, 8)}</strong><p class="sub">지갑의 USDT 잔액 전체 (수수료 외 금액 포함 가능)</p></article>${settledCard}</div><p class="burn-description">수수료 지갑 주소는 컨트랙트 생성 시 고정되어 바꿀 수 없습니다. 누구나 이동을 실행할 수 있지만 받는 곳은 항상 이 지갑입니다. 수수료는 소각되지 않으며 운영자가 보관합니다. 대출자 원금·이자와 담보는 수수료 지갑으로 이동할 수 없습니다.</p>`;
   } else {
     const [pending, ready, burned, used] = await Promise.all([
       contracts.lending.feeBalance(),
@@ -798,7 +939,7 @@ async function handleAction(action, id) {
       ? `\n청산선 ${percent(o.terms.liquidationBps)}% · 청산 가격: ${priceUp(liquidationPrice({ debt: input, collateral, terms: o.terms }))} USDT 이하 (지금 카운슬 가격 ${fmt(currentPrice)} USDT · 이자가 쌓이면 청산 가격도 올라갑니다)`
       : "";
     const settlementLine = council()
-      ? `카운슬 가격이 청산 가격 이하로 내려가거나 상환 기한까지 갚지 않으면 정산됩니다. 정산되면 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다. 대출자는 USDT 대신 WBMB를 받습니다. ${staleNote()}`
+      ? `카운슬 가격이 청산 가격 이하로 내려가거나 상환 기한까지 갚지 않으면 정산됩니다. 정산되면 부채에 보너스 ${bonusPct}%를 더한 만큼의 WBMB가 대출자에게 가고 나머지 담보는 차입자에게 돌아갑니다.${settleFee() ? ` 이때 못 낸 이자의 ${feePct}%가 수수료로 돌려받을 담보에서 빠집니다.` : ""} 대출자는 USDT 대신 WBMB를 받습니다. ${staleNote()}`
       : "담보 정산 시 대출자는 USDT 대신 WBMB를 받습니다.";
     await txAction(
       "부분 체결",
@@ -859,12 +1000,13 @@ async function handleAction(action, id) {
   } else if (action === "settle") {
     const q = await contracts.lending.quoteSettlement(id);
     // quoteSettlement also reports price 0 for maturity-only loans, so the stale-price wording needs the loan's mode.
-    const priced =
-      council() &&
-      Number((await contracts.lending.getLoan(id)).terms.mode) === 0;
+    const loan = await contracts.lending.getLoan(id);
+    const priced = council() && Number(loan.terms.mode) === 0;
+    // The settlement fee is the collateral the quote gives to neither side.
+    const fee = loan.collateral - q.toLender - q.toBorrower;
     await txAction(
       "WBMB 정산",
-      `대출 #${id}를 WBMB로 종료합니다.\n대출자 귀속 ${fmt(q.toLender, 8, 8)} WBMB\n차입자 반환 ${fmt(q.toBorrower, 8, 8)} WBMB\n종료 부채 ${fmt(q.debt, 18, 8)} USDT${council() ? (priced ? (q.price === 0n ? "\n쓸 수 있는 가격이 없어 담보 전부가 대출자에게 갑니다." : `\n적용 가격 ${fmt(q.price)} USDT${priceLive ? "" : " (가격 갱신이 끊겨 마지막 가격을 씁니다)"} · 보너스 ${bonusPct}% 포함`) : `\n${modeText(1)}`) : ""}\nUSDT가 지급되는 것이 아니며 이 대출의 채권은 컨트랙트에서 종료됩니다.`,
+      `대출 #${id}를 WBMB로 종료합니다.\n대출자 귀속 ${fmt(q.toLender, 8, 8)} WBMB\n차입자 반환 ${fmt(q.toBorrower, 8, 8)} WBMB${fee > 0n ? `\n수수료 ${fmt(fee, 8, 8)} WBMB (못 낸 이자의 ${feePct}%)` : ""}\n종료 부채 ${fmt(q.debt, 18, 8)} USDT${council() ? (priced ? (q.price === 0n ? "\n쓸 수 있는 가격이 없어 담보 전부가 대출자에게 갑니다." : `\n적용 가격 ${fmt(q.price)} USDT${priceLive ? "" : " (가격 갱신이 끊겨 마지막 가격을 씁니다)"} · 보너스 ${bonusPct}% 포함`) : `\n${modeText(1)}`) : ""}\nUSDT가 지급되는 것이 아니며 이 대출의 채권은 컨트랙트에서 종료됩니다.`,
       (ctx) => ctx.send(ctx.lending.settle(id)),
     );
   } else if (action === "claimUSDT" || action === "claimWBMB") {
@@ -917,6 +1059,7 @@ document.querySelectorAll("[data-tab]").forEach((button) =>
   button.addEventListener("click", () => {
     if (busy) return;
     tab = button.dataset.tab;
+    remember("sessionStorage", TAB_KEY, tab);
     render().catch((e) => status(errorMessage(e), "error"));
   }),
 );
@@ -964,6 +1107,7 @@ $("#open-offer").onclick = () => {
     status("먼저 체험 지갑을 선택하거나 지갑을 연결하세요.", "error");
     return;
   }
+  syncCollateralHint();
   $("#offer-dialog").showModal();
 };
 document
@@ -985,7 +1129,37 @@ function syncOfferForm() {
       : "체험 조건: 헤어컷 10% · 청산 기준 95% · 만기 유예 1일. 단리 APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 5%가 별도 소각 수수료입니다.";
   if (council()) $("#terms-note").innerHTML = councilTermsHtml();
 }
-form.elements.side.onchange = syncOfferForm;
+// Under the collateral field of a council borrow request: what today's price demands for the typed amount.
+function syncCollateralHint() {
+  const hint = $("#collateral-hint");
+  hint.hidden = true;
+  if (!council() || form.elements.side.value !== "0" || !priceLive) return;
+  try {
+    const total = amount(form.elements.total.value);
+    const days = Number(form.elements.duration.value);
+    if (total <= 0n || !Number.isInteger(days) || days < 1) return;
+    const min = minCollateral(total, {
+      ...COUNCIL_TERMS,
+      aprBps: amount(form.elements.apr.value, 2),
+      duration: days * 86400,
+    });
+    let pledged = 0n;
+    try {
+      pledged = amount(form.elements.collateral.value, 8);
+    } catch {}
+    const enough = pledged >= min;
+    hint.textContent = `${enough ? "" : "담보 부족 · "}지금 카운슬 가격(${fmt(currentPrice)} USDT)에서 ${fmt(total)} USDT를 빌리려면 최소 ${full(min, 8)} WBMB`;
+    hint.classList.toggle("warning", !enough);
+    hint.hidden = false;
+  } catch {
+    // an amount still being typed: no hint until it parses
+  }
+}
+form.addEventListener("input", syncCollateralHint);
+form.elements.side.onchange = () => {
+  syncOfferForm();
+  syncCollateralHint();
+};
 form.elements.mode.onchange = () => {
   $("#mode-warning").hidden = form.elements.mode.value !== "1";
 };
@@ -1036,6 +1210,13 @@ form.onsubmit = async (e) => {
       grace: council() ? COUNCIL_TERMS.grace : 86400,
       mode,
     };
+    if (council() && side === 0 && priceLive) {
+      const min = minCollateral(total, terms);
+      if (collateral < min)
+        throw new Error(
+          `담보가 부족합니다. 지금 카운슬 가격(${fmt(currentPrice)} USDT)에서 ${fmt(total)} USDT를 빌리려면 담보가 최소 ${full(min, 8)} WBMB 필요합니다 (담보 가치의 ${councilLtv()}%까지 빌릴 수 있습니다). 이대로 올리면 아무도 체결할 수 없습니다.`,
+        );
+    }
     $("#offer-dialog").close();
     await txAction(
       "거래 게시",
@@ -1169,6 +1350,29 @@ $("#set-price").onclick = () => labAction(0);
 $("#advance-day").onclick = () => labAction(86400);
 $("#advance-month").onclick = () => labAction(31 * 86400);
 $("#advance-week").onclick = () => labAction(7 * 86400, false);
+
+// The live page's "check it yourself" block: every address it uses, on the explorer, and its source.
+function renderVerify() {
+  const explorer = LIVE_CHAINS[config.chainId].blockExplorerUrls[0];
+  const rows = [
+    ["시장 컨트랙트", config.addresses.lending],
+    ...(council() ? [["가격 컨트랙트", config.addresses.oracle]] : []),
+    ["WBMB 토큰", config.addresses.wbmb],
+    ["USDT 토큰", config.addresses.usdt],
+  ];
+  $("#verify-addresses").innerHTML = rows
+    .map(
+      ([label, address]) =>
+        `<div><dt>${label}</dt><dd><a href="${explorer}/address/${esc(address)}" target="_blank" rel="noopener">${esc(address)}</a></dd></div>`,
+    )
+    .join("");
+  $("#verify-source").href =
+    `https://repo.sourcify.dev/${config.chainId}/${config.addresses.lending}`;
+  $("#verify-repo").href = REPO_URL;
+  $("#verify-contact").href = `${REPO_URL}/issues`;
+  $("#verify-operator").textContent = OPERATOR;
+  $("#verify").hidden = false;
+}
 
 async function init() {
   const responses = await Promise.all([
@@ -1304,6 +1508,7 @@ async function init() {
     $(".demo-banner").innerHTML =
       '<span class="dot"></span> 실제 자금 · BNB Smart Chain · 감사받지 않은 컨트랙트입니다. 잃어도 되는 금액만 사용하세요';
     $(".demo-banner").classList.add("live");
+    renderVerify();
   }
   $("#demo-account").innerHTML =
     '<option value="">체험 지갑 선택</option>' +
@@ -1320,13 +1525,12 @@ async function init() {
       provider: window.ethereum,
     });
   renderWallets();
+  const openTab = recall("sessionStorage", TAB_KEY);
+  if (document.querySelector(`[data-tab="${CSS.escape(openTab ?? "")}"]`))
+    tab = openTab;
   await refresh();
-  status(
-    config.demo
-      ? "로컬 체인 준비 완료 · 체험 지갑을 선택하면 바로 거래할 수 있습니다."
-      : "BNB Smart Chain 연결 완료 · 지갑을 연결하면 거래할 수 있습니다.",
-    "success",
-  );
+  status(readyText(), "success");
+  await restoreWallet();
 }
 init().catch((e) => {
   status(errorMessage(e), "error");

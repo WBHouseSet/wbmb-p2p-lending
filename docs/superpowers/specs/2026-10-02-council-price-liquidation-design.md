@@ -71,6 +71,8 @@
 
 그 밖의 동작은 그대로: 게시자가 APR·담보 여유(haircut)·청산선을 정함, 수수료는 이자의 `feeBps`를 차입자가 추가 부담, 관리자·업그레이드 없음.
 
+**정산 수수료 (2026-10-02 추가, 사용자 확정):** 정산 시 미납 이자의 `feeBps`를 정산 가격으로 WBMB 환산해, 대출자 몫을 채운 뒤 차입자에게 돌아갈 남은 담보에서만 뗀다(남는 담보가 없으면 0). `claimableWBMB[feeVault]`로 적립하고 `SettlementFee(id, feeWBMB)`를 낸다. `quoteSettlement`의 `toBorrower`는 수수료를 뺀 값이며, 수수료 = 담보 − `toLender` − `toBorrower`.
+
 배포 값(본 시장): `feeBps` 500(이자의 5%), `liquidationBonusBps` 500(5%) — 사용자 확정 2026-10-02. `staleSettleDelay` 7일, 최소 기간 1시간, 유예 하한 1일. 테스트 시장은 최소 기간·유예·`minInterval`·`staleSettleDelay`가 모두 5분.
 
 > 2026-10-02 사용자 변경: `liquidationBonusBps` 1000(10%), 화면의 담보 여유 50%(담보 가치의 50%까지 대출)·청산선 70%. 초기 알트코인의 변동성과 대출자 우대가 이유다. 7절의 40%/80%는 이 값으로 바뀌었다.
