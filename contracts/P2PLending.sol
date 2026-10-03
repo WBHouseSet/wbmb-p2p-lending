@@ -18,7 +18,7 @@ contract P2PLending is ReentrancyGuard {
     uint256 public constant YEAR = 365 days;
     uint256 public constant WBMB_UNIT = 1e8;
     uint256 public constant MAX_AMOUNT = 1e30;
-    uint256 public constant MIN_OFFER = 1e12; // 0.000001 USDT; economic minimum chosen by maker
+    uint256 public constant MIN_OFFER = 1e12; // 0.000001 MOVN; economic minimum chosen by maker
 
     enum Side { Borrow, Lend }
     enum Mode { PriceAndMaturity, MaturityOnlyAllCollateral }
@@ -59,10 +59,10 @@ contract P2PLending is ReentrancyGuard {
         Terms terms;
     }
 
-    IERC20 public immutable usdt;
+    IERC20 public immutable movn;
     IERC20 public immutable wbmb;
     IPricePolicy public immutable pricePolicy;
-    /// Receives USDT fees through flushFees and claims WBMB settlement fees itself, so it must be able to call claimWBMB.
+    /// Receives MOVN fees through flushFees and claims WBMB settlement fees itself, so it must be able to call claimWBMB.
     address public immutable feeVault;
     uint256 public immutable feeBps;
     /// Shortest loan and shortest grace this deployment accepts, in seconds. The grace floor binds
@@ -81,12 +81,12 @@ contract P2PLending is ReentrancyGuard {
     // Per-account ids so a wallet's positions stay findable however many others exist.
     mapping(address => uint256[]) private offerIds;
     mapping(address => uint256[]) private loanIds;
-    mapping(address => uint256) public claimableUSDT;
+    mapping(address => uint256) public claimableMOVN;
     mapping(address => uint256) public claimableWBMB;
-    uint256 public escrowUSDT;
+    uint256 public escrowMOVN;
     uint256 public escrowWBMB;
     uint256 public activeCollateral;
-    uint256 public totalClaimUSDT;
+    uint256 public totalClaimMOVN;
     uint256 public totalClaimWBMB;
     uint256 public feeBalance;
 
@@ -101,13 +101,13 @@ contract P2PLending is ReentrancyGuard {
     event FeesFlushed(uint256 amount);
 
     constructor(
-        address usdt_, address wbmb_, address policy_, address vault_, uint256 feeBps_, uint256 minDuration_, uint256 minGrace_,
+        address movn_, address wbmb_, address policy_, address vault_, uint256 feeBps_, uint256 minDuration_, uint256 minGrace_,
         uint256 bonusBps_, uint256 staleDelay_
     ) {
-        require(usdt_ != wbmb_ && vault_ != address(0) && (policy_ == address(0) || policy_.code.length > 0), "BAD_CONFIG");
-        require(IERC20Metadata(usdt_).decimals() == 18 && IERC20Metadata(wbmb_).decimals() == 8, "DECIMALS");
+        require(movn_ != wbmb_ && vault_ != address(0) && (policy_ == address(0) || policy_.code.length > 0), "BAD_CONFIG");
+        require(IERC20Metadata(movn_).decimals() == 18 && IERC20Metadata(wbmb_).decimals() == 8, "DECIMALS");
         require(feeBps_ <= 1000, "FEE_TOO_HIGH");
-        usdt = IERC20(usdt_); wbmb = IERC20(wbmb_); pricePolicy = IPricePolicy(policy_);
+        movn = IERC20(movn_); wbmb = IERC20(wbmb_); pricePolicy = IPricePolicy(policy_);
         require(minDuration_ >= 1 minutes && minDuration_ <= 30 days && minGrace_ >= 1 minutes && minGrace_ <= 7 days, "BAD_LIMITS");
         // The stale delay only matters with a price policy; there it must leave time to restart a relay.
         require(bonusBps_ <= 1000 && staleDelay_ <= 30 days && (policy_ == address(0) || staleDelay_ >= 1 minutes), "BAD_LIMITS");
@@ -142,7 +142,7 @@ contract P2PLending is ReentrancyGuard {
         offerIds[msg.sender].push(id);
         offers[id] = Offer(msg.sender, side, false, expiresAt, total, total, minFill, collateral, collateral, t);
         if (side == Side.Borrow) { escrowWBMB += collateral; _pull(wbmb, msg.sender, collateral); }
-        else { escrowUSDT += total; _pull(usdt, msg.sender, total); }
+        else { escrowMOVN += total; _pull(movn, msg.sender, total); }
         emit OfferCreated(id, msg.sender, side, total);
     }
 
@@ -155,7 +155,7 @@ contract P2PLending is ReentrancyGuard {
         if (o.side == Side.Borrow) {
             uint256 amount = o.collateralRemaining;
             o.collateralRemaining = 0; escrowWBMB -= amount; _creditWBMB(o.maker, amount);
-        } else { o.collateralRemaining = 0; escrowUSDT -= o.remaining; _creditUSDT(o.maker, o.remaining); }
+        } else { o.collateralRemaining = 0; escrowMOVN -= o.remaining; _creditMOVN(o.maker, o.remaining); }
         o.remaining = 0;
         emit OfferClosed(id);
     }
@@ -196,7 +196,7 @@ contract P2PLending is ReentrancyGuard {
         o.remaining -= amount;
         if (o.remaining == 0) o.closed = true;
         if (o.side == Side.Borrow) { o.collateralRemaining -= collateral; escrowWBMB -= collateral; }
-        else { if (oracleFree()) o.collateralRemaining -= collateral; escrowUSDT -= amount; }
+        else { if (oracleFree()) o.collateralRemaining -= collateral; escrowMOVN -= amount; }
         activeCollateral += collateral;
         loanId = ++loanCount;
         loanIds[borrower].push(loanId); loanIds[lender].push(loanId);
@@ -205,9 +205,9 @@ contract P2PLending is ReentrancyGuard {
         l.principal = amount; l.collateral = collateral; l.startedAt = uint64(block.timestamp);
         l.lastAccrued = uint64(block.timestamp); l.maturity = uint64(block.timestamp + o.terms.duration);
         l.status = Status.Active; l.terms = o.terms;
-        if (o.side == Side.Borrow) _pull(usdt, lender, amount);
+        if (o.side == Side.Borrow) _pull(movn, lender, amount);
         else _pull(wbmb, borrower, collateral);
-        _send(usdt, borrower, amount);
+        _send(movn, borrower, amount);
         emit LoanCreated(loanId, borrower, lender, id, amount, collateral);
     }
 
@@ -257,12 +257,12 @@ contract P2PLending is ReentrancyGuard {
         l.interest = 0; l.interestRemainder = rem;
         l.feeRemainder = (interest * feeBps + l.feeRemainder) % BPS;
         l.principal -= principal;
-        _creditUSDT(l.lender, principal + interest); feeBalance += fee;
+        _creditMOVN(l.lender, principal + interest); feeBalance += fee;
         if (l.principal == 0) {
             l.status = Status.Repaid; l.interestRemainder = 0; l.feeRemainder = 0;
             activeCollateral -= l.collateral; _creditWBMB(l.borrower, l.collateral); l.collateral = 0;
         }
-        _pull(usdt, msg.sender, total);
+        _pull(movn, msg.sender, total);
         emit Repaid(id, principal, interest, fee);
     }
 
@@ -311,10 +311,10 @@ contract P2PLending is ReentrancyGuard {
         emit Settled(id, a, b, debt, price);
     }
 
-    function claimUSDT() external nonReentrant {
-        uint256 a = claimableUSDT[msg.sender]; require(a > 0, "NOTHING_TO_CLAIM");
-        claimableUSDT[msg.sender] = 0; totalClaimUSDT -= a;
-        _send(usdt, msg.sender, a); emit Claimed(msg.sender, address(usdt), a);
+    function claimMOVN() external nonReentrant {
+        uint256 a = claimableMOVN[msg.sender]; require(a > 0, "NOTHING_TO_CLAIM");
+        claimableMOVN[msg.sender] = 0; totalClaimMOVN -= a;
+        _send(movn, msg.sender, a); emit Claimed(msg.sender, address(movn), a);
     }
     function claimWBMB() external nonReentrant {
         uint256 a = claimableWBMB[msg.sender]; require(a > 0, "NOTHING_TO_CLAIM");
@@ -323,12 +323,12 @@ contract P2PLending is ReentrancyGuard {
     }
     function flushFees() external nonReentrant {
         uint256 a = feeBalance; require(a > 0, "NO_FEES"); feeBalance = 0;
-        _send(usdt, feeVault, a); emit FeesFlushed(a);
+        _send(movn, feeVault, a); emit FeesFlushed(a);
     }
-    function liabilities() external view returns (uint256 usdtTotal, uint256 wbmbTotal) {
-        return (escrowUSDT + totalClaimUSDT + feeBalance, escrowWBMB + activeCollateral + totalClaimWBMB);
+    function liabilities() external view returns (uint256 movnTotal, uint256 wbmbTotal) {
+        return (escrowMOVN + totalClaimMOVN + feeBalance, escrowWBMB + activeCollateral + totalClaimWBMB);
     }
-    function _creditUSDT(address who, uint256 amount) internal { claimableUSDT[who] += amount; totalClaimUSDT += amount; }
+    function _creditMOVN(address who, uint256 amount) internal { claimableMOVN[who] += amount; totalClaimMOVN += amount; }
     function _creditWBMB(address who, uint256 amount) internal { claimableWBMB[who] += amount; totalClaimWBMB += amount; }
     function _pull(IERC20 token, address from, uint256 amount) internal {
         uint256 before_ = token.balanceOf(address(this));

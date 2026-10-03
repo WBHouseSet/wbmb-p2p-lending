@@ -70,9 +70,9 @@ export async function deployFixture(provider, { seed = false } = {}) {
   );
   const [admin, borrower, lender, lender2] = accounts;
   const addresses = await Promise.all(accounts.map((a) => a.getAddress()));
-  const usdt = await deployContract("MockToken", admin, [
-    "Demo USDT",
-    "dUSDT",
+  const movn = await deployContract("MockToken", admin, [
+    "Demo MOVN",
+    "dMOVN",
     18,
   ]);
   const wbmb = await deployContract("MockToken", admin, [
@@ -108,12 +108,12 @@ export async function deployFixture(provider, { seed = false } = {}) {
     );
   await publishPrices(report.weekLow, report.current);
   const burner = await deployContract("MockFeeBurner", admin, [
-    usdt.target,
+    movn.target,
     wbmb.target,
     oracle.target,
   ]);
   const lending = await deployContract("P2PLending", admin, [
-    usdt.target,
+    movn.target,
     wbmb.target,
     oracle.target,
     burner.target,
@@ -124,7 +124,7 @@ export async function deployFixture(provider, { seed = false } = {}) {
     7 * 86400,
   ]);
   for (const address of addresses) {
-    await (await usdt.mint(address, us(10000))).wait();
+    await (await movn.mint(address, us(10000))).wait();
     await (await wbmb.mint(address, wb(100))).wait();
   }
   await (await wbmb.mint(burner.target, wb(10000))).wait();
@@ -145,7 +145,7 @@ export async function deployFixture(provider, { seed = false } = {}) {
         .connect(borrower)
         .createOffer(0, us(900), wb(10), us(10), expires, terms)
     ).wait();
-    await (await usdt.connect(lender).approve(lending.target, us(1000))).wait();
+    await (await movn.connect(lender).approve(lending.target, us(1000))).wait();
     await (
       await lending
         .connect(lender)
@@ -164,7 +164,7 @@ export async function deployFixture(provider, { seed = false } = {}) {
     borrower,
     lender,
     lender2,
-    usdt,
+    movn,
     wbmb,
     oracle,
     burner,
@@ -192,9 +192,9 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
   );
   const [admin, borrower, lender] = accounts;
   const addresses = await Promise.all(accounts.map((a) => a.getAddress()));
-  const usdt = await deployContract("MockToken", admin, [
-    "Demo USDT",
-    "dUSDT",
+  const movn = await deployContract("MockToken", admin, [
+    "Demo MOVN",
+    "dMOVN",
     18,
   ]);
   const wbmb = await deployContract("MockToken", admin, [
@@ -204,7 +204,7 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
   ]);
   const feeWallet = addresses[0];
   const lending = await deployContract("P2PLending", admin, [
-    usdt.target,
+    movn.target,
     wbmb.target,
     ZeroAddress,
     feeWallet,
@@ -215,7 +215,7 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
     0,
   ]);
   for (const address of addresses) {
-    await (await usdt.mint(address, us(10000))).wait();
+    await (await movn.mint(address, us(10000))).wait();
     await (await wbmb.mint(address, wb(100))).wait();
   }
   if (seed) {
@@ -227,14 +227,14 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
         .connect(borrower)
         .createOffer(0, us(900), wb(10), us(10), expires, FIXED_TERMS)
     ).wait();
-    await (await usdt.connect(lender).approve(lending.target, us(1000))).wait();
+    await (await movn.connect(lender).approve(lending.target, us(1000))).wait();
     await (
       await lending
         .connect(lender)
         .createOffer(1, us(1000), wb(12), us(10), expires, FIXED_TERMS)
     ).wait();
   }
-  return { provider, accounts, addresses, usdt, wbmb, lending, feeWallet };
+  return { provider, accounts, addresses, movn, wbmb, lending, feeWallet };
 }
 export const COUNCIL_TERMS = {
   aprBps: 1200,
@@ -261,9 +261,9 @@ export async function deployCouncilFixture(
   );
   const [admin, borrower, lender, lender2] = accounts;
   const addresses = await Promise.all(accounts.map((a) => a.getAddress()));
-  const usdt = await deployContract("MockToken", admin, [
-    "Demo USDT",
-    "dUSDT",
+  const movn = await deployContract("MockToken", admin, [
+    "Demo MOVN",
+    "dMOVN",
     18,
   ]);
   const wbmb = await deployContract("MockToken", admin, [
@@ -297,7 +297,7 @@ export async function deployCouncilFixture(
   await publishPrice(us(100));
   const feeWallet = addresses[0];
   const lending = await deployContract("P2PLending", admin, [
-    usdt.target,
+    movn.target,
     wbmb.target,
     oracle.target,
     feeWallet,
@@ -308,7 +308,7 @@ export async function deployCouncilFixture(
     7 * 86400,
   ]);
   for (const address of addresses) {
-    await (await usdt.mint(address, us(10000))).wait();
+    await (await movn.mint(address, us(10000))).wait();
     await (await wbmb.mint(address, wb(100))).wait();
   }
   if (seed) {
@@ -321,7 +321,7 @@ export async function deployCouncilFixture(
         .connect(borrower)
         .createOffer(0, us(350), wb(10), us(10), expires, terms)
     ).wait();
-    await (await usdt.connect(lender).approve(lending.target, us(1000))).wait();
+    await (await movn.connect(lender).approve(lending.target, us(1000))).wait();
     await (
       await lending
         .connect(lender)
@@ -340,7 +340,7 @@ export async function deployCouncilFixture(
     borrower,
     lender,
     lender2,
-    usdt,
+    movn,
     wbmb,
     oracle,
     lending,
@@ -366,7 +366,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
       liquidationBonusBps: f.bonusBps,
       settlementFee: true,
       addresses: {
-        usdt: f.usdt.target,
+        movn: f.movn.target,
         wbmb: f.wbmb.target,
         lending: f.lending.target,
         oracle: f.oracle.target,
@@ -392,7 +392,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
       feeWallet: f.feeWallet,
       feeBps: 500,
       addresses: {
-        usdt: f.usdt.target,
+        movn: f.movn.target,
         wbmb: f.wbmb.target,
         lending: f.lending.target,
       },
@@ -408,7 +408,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
     rpcUrl,
     deployedAt: new Date().toISOString(),
     addresses: {
-      usdt: f.usdt.target,
+      movn: f.movn.target,
       wbmb: f.wbmb.target,
       oracle: f.oracle.target,
       burner: f.burner.target,

@@ -41,9 +41,9 @@ describe("council-price market", () => {
     await f.provider.send("evm_increaseTime", [s]);
     await f.provider.send("evm_mine", []);
   }
-  // Lender offers 1000 USDT; borrower takes 600 and must post 10 WBMB at price 100 (60% LTV).
+  // Lender offers 1000 MOVN; borrower takes 600 and must post 10 WBMB at price 100 (60% LTV).
   async function loan600(terms = {}) {
-    await tx(f.usdt.connect(f.lender).approve(f.lending.target, us(1000)));
+    await tx(f.movn.connect(f.lender).approve(f.lending.target, us(1000)));
     await tx(
       f.lending
         .connect(f.lender)
@@ -66,7 +66,7 @@ describe("council-price market", () => {
   }
   async function conserved() {
     const [u, w] = await f.lending.liabilities();
-    assert.equal(await f.usdt.balanceOf(f.lending.target), u);
+    assert.equal(await f.movn.balanceOf(f.lending.target), u);
     assert.equal(await f.wbmb.balanceOf(f.lending.target), w);
   }
 
@@ -74,7 +74,7 @@ describe("council-price market", () => {
     assert.equal(await f.lending.liquidationBonusBps(), 500n);
     assert.equal(await f.lending.staleSettleDelay(), BigInt(7 * DAY));
     const args = (bonus, delay) => [
-      f.usdt.target,
+      f.movn.target,
       f.wbmb.target,
       f.oracle.target,
       f.feeWallet,
@@ -99,7 +99,7 @@ describe("council-price market", () => {
   });
 
   it("rejects a priced offer whose grace is below the market minimum", async () => {
-    await tx(f.usdt.connect(f.lender).approve(f.lending.target, us(1000)));
+    await tx(f.movn.connect(f.lender).approve(f.lending.target, us(1000)));
     await assert.rejects(
       f.lending
         .connect(f.lender)
@@ -152,7 +152,7 @@ describe("council-price market", () => {
     assert.equal(q.toBorrower, wb(3.7));
   });
 
-  // 36.5% a year for 30 days on 600 USDT is exactly 18 USDT of interest; the repayment fee on it would be 0.9 USDT.
+  // 36.5% a year for 30 days on 600 MOVN is exactly 18 MOVN of interest; the repayment fee on it would be 0.9 MOVN.
   const feeOf = async (receipt) =>
     receipt.logs
       .filter((x) => x.address === f.lending.target)
@@ -209,8 +209,8 @@ describe("council-price market", () => {
 
   it("interest already paid with its fee is not charged again at settlement", async () => {
     const id = await loan600({ aprBps: 3650 });
-    await advance(30 * DAY); // matured: all 18 USDT of interest accrued
-    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(100)));
+    await advance(30 * DAY); // matured: all 18 MOVN of interest accrued
+    await tx(f.movn.connect(f.borrower).approve(f.lending.target, us(100)));
     await tx(f.lending.connect(f.borrower).repay(id, 0, us(100))); // interest only
     assert.equal(await f.lending.feeBalance(), us(0.9));
     await advance(DAY);
@@ -244,7 +244,7 @@ describe("council-price market", () => {
     await assert.rejects(f.lending.settle(id), /STALE_PRICE/);
     await tx(f.wbmb.connect(f.borrower).approve(f.lending.target, wb(1)));
     await tx(f.lending.connect(f.borrower).addCollateral(id, wb(1)));
-    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(600)));
+    await tx(f.movn.connect(f.borrower).approve(f.lending.target, us(600)));
     await tx(f.lending.connect(f.borrower).repay(id, us(600), us(600)));
     assert.equal(await f.lending.claimableWBMB(f.addresses[1]), wb(11));
     await conserved();
@@ -277,7 +277,7 @@ describe("council-price market", () => {
   it("with no usable last price either, the lender takes all after the delay", async () => {
     const policy = await deployContract("MockPricePolicy", f.admin, []);
     const lending = await deployContract("P2PLending", f.admin, [
-      f.usdt.target,
+      f.movn.target,
       f.wbmb.target,
       policy.target,
       f.feeWallet,
@@ -288,7 +288,7 @@ describe("council-price market", () => {
       7 * DAY,
     ]);
     await tx(policy.set(us(100), (await now()) + DAY, us(100)));
-    await tx(f.usdt.connect(f.lender).approve(lending.target, us(600)));
+    await tx(f.movn.connect(f.lender).approve(lending.target, us(600)));
     await tx(
       lending
         .connect(f.lender)
@@ -374,7 +374,7 @@ describe("council-price market", () => {
   it("an overdue borrower can still repay in full while the price is stale", async () => {
     const id = await loan600();
     await advance(30 * DAY + DAY + DAY);
-    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(600)));
+    await tx(f.movn.connect(f.borrower).approve(f.lending.target, us(600)));
     await tx(f.lending.connect(f.borrower).repay(id, us(600), us(600)));
     assert.equal(await f.lending.claimableWBMB(f.addresses[1]), wb(10));
   });
@@ -391,7 +391,7 @@ describe("council-price market", () => {
     const timeOf = async (receipt) =>
       BigInt((await f.provider.getBlock(receipt.blockNumber)).timestamp);
     const [, borrower, lender] = f.addresses;
-    await tx(f.usdt.connect(f.lender).approve(f.lending.target, us(1000)));
+    await tx(f.movn.connect(f.lender).approve(f.lending.target, us(1000)));
     await tx(
       f.lending
         .connect(f.lender)
@@ -419,7 +419,7 @@ describe("council-price market", () => {
     // A partial repayment nine days in: all accrued interest plus part of the principal.
     await advance(9 * DAY + 4321);
     const part = us("211.000000000000000007");
-    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(1000)));
+    await tx(f.movn.connect(f.borrower).approve(f.lending.target, us(1000)));
     const paidAt = await timeOf(
       await tx(f.lending.connect(f.borrower).repay(id, part, us(1000))),
     );
@@ -428,7 +428,7 @@ describe("council-price market", () => {
     const carried = firstNumerator % (BPS * YEAR);
     const feePaid = (interestPaid * FEE) / BPS;
     assert.ok(interestPaid > 0n && carried > 0n);
-    assert.equal(await f.lending.claimableUSDT(lender), part + interestPaid);
+    assert.equal(await f.lending.claimableMOVN(lender), part + interestPaid);
     assert.equal(await f.lending.feeBalance(), feePaid);
 
     // Overdue, settled at a price that does not divide the debt evenly.
@@ -447,11 +447,11 @@ describe("council-price market", () => {
     assert.notEqual(numerator % (price * BPS), 0n);
     assert.ok(toLender < collateral);
     // The settlement fee: what a full repayment would have charged on the still unpaid interest, at this price.
-    const feeUsdt = ceilDiv(
+    const feeMovn = ceilDiv(
       (debt - left) * FEE + ((interestPaid * FEE) % BPS),
       BPS,
     );
-    const feeWbmb = ceilDiv(feeUsdt * UNIT, price);
+    const feeWbmb = ceilDiv(feeMovn * UNIT, price);
     assert.ok(feeWbmb > 0n && toLender + feeWbmb < collateral);
     const q = await f.lending.quoteSettlement(id);
     assert.equal(q.debt, debt);
@@ -471,7 +471,7 @@ describe("council-price market", () => {
     // Everything is paid out and the contract ends empty.
     await tx(f.lending.connect(f.lender).closeOffer(offer));
     await tx(f.lending.connect(f.lender).claimWBMB());
-    await tx(f.lending.connect(f.lender).claimUSDT());
+    await tx(f.lending.connect(f.lender).claimMOVN());
     await tx(f.lending.connect(f.borrower).claimWBMB());
     await tx(f.lending.connect(f.admin).claimWBMB());
     await conserved();
@@ -483,22 +483,22 @@ describe("council-price market", () => {
     );
     assert.equal(await f.wbmb.balanceOf(f.feeWallet), wb(100) + feeWbmb);
     assert.equal(
-      await f.usdt.balanceOf(lender),
+      await f.movn.balanceOf(lender),
       us(10000) - principal + part + interestPaid,
     );
     assert.equal(
-      await f.usdt.balanceOf(borrower),
+      await f.movn.balanceOf(borrower),
       us(10000) + principal - part - interestPaid - feePaid,
     );
-    assert.equal(await f.usdt.balanceOf(f.feeWallet), us(10000) + feePaid);
-    assert.equal(await f.usdt.balanceOf(f.lending.target), 0n);
+    assert.equal(await f.movn.balanceOf(f.feeWallet), us(10000) + feePaid);
+    assert.equal(await f.movn.balanceOf(f.lending.target), 0n);
     assert.equal(await f.wbmb.balanceOf(f.lending.target), 0n);
     assert.deepEqual([...(await f.lending.liabilities())], [0n, 0n]);
   });
 
   it("expired price: a new fill reverts with STALE_PRICE, cancelling and claiming still work", async () => {
     const [, borrower, lender] = f.addresses;
-    const id = await loan600(); // lend offer 1 keeps 400 USDT unfilled
+    const id = await loan600(); // lend offer 1 keeps 400 MOVN unfilled
     const lendOffer = await f.lending.offerCount();
     await tx(f.wbmb.connect(f.borrower).approve(f.lending.target, wb(105)));
     await tx(
@@ -510,8 +510,8 @@ describe("council-price market", () => {
         }),
     );
     const borrowOffer = await f.lending.offerCount();
-    // A part repayment leaves the lender a USDT balance to claim later.
-    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(100)));
+    // A part repayment leaves the lender a MOVN balance to claim later.
+    await tx(f.movn.connect(f.borrower).approve(f.lending.target, us(100)));
     await tx(f.lending.connect(f.borrower).repay(id, us(100), us(100)));
 
     await advance(6 * DAY); // the price has expired; both offers are still open
@@ -527,7 +527,7 @@ describe("council-price market", () => {
         .fillOffer(lendOffer, us(100), wb(100), (await now()) + 300),
       /STALE_PRICE/,
     );
-    await tx(f.usdt.connect(f.lender2).approve(f.lending.target, us(100)));
+    await tx(f.movn.connect(f.lender2).approve(f.lending.target, us(100)));
     await assert.rejects(
       f.lending
         .connect(f.lender2)
@@ -539,15 +539,15 @@ describe("council-price market", () => {
     // Cancelling credits the makers; claiming pays them out.
     await tx(f.lending.connect(f.lender).closeOffer(lendOffer));
     await tx(f.lending.connect(f.borrower).closeOffer(borrowOffer));
-    assert.equal(await f.lending.claimableUSDT(lender), us(500));
+    assert.equal(await f.lending.claimableMOVN(lender), us(500));
     assert.equal(await f.lending.claimableWBMB(borrower), wb(5));
-    const usdtBefore = await f.usdt.balanceOf(lender);
+    const movnBefore = await f.movn.balanceOf(lender);
     const wbmbBefore = await f.wbmb.balanceOf(borrower);
-    await tx(f.lending.connect(f.lender).claimUSDT());
+    await tx(f.lending.connect(f.lender).claimMOVN());
     await tx(f.lending.connect(f.borrower).claimWBMB());
-    assert.equal(await f.usdt.balanceOf(lender), usdtBefore + us(500));
+    assert.equal(await f.movn.balanceOf(lender), movnBefore + us(500));
     assert.equal(await f.wbmb.balanceOf(borrower), wbmbBefore + wb(5));
-    assert.equal(await f.lending.claimableUSDT(lender), 0n);
+    assert.equal(await f.lending.claimableMOVN(lender), 0n);
     assert.equal(await f.lending.claimableWBMB(borrower), 0n);
     await conserved();
   });

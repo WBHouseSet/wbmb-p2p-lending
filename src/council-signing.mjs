@@ -5,7 +5,7 @@ import { keccak256, toUtf8Bytes } from "ethers";
 export const COUNCIL_DOMAIN_NAME = "WBMB Council Price";
 export const COUNCIL_DOMAIN_VERSION = "1";
 export const COUNCIL_POLICY_ID = keccak256(
-  toUtf8Bytes("wbmb-usdt/mobick-council/v1"),
+  toUtf8Bytes("wbmb-movn/mobick-council/v1"),
 );
 export const COUNCIL_TYPES = {
   Report: [

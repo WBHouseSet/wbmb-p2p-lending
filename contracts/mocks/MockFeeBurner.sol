@@ -11,24 +11,24 @@ import {MockToken} from "./MockToken.sol";
 /// Reserves are prefunded with mock WBMB. Fees are paid into an immutable sink.
 contract MockFeeBurner is ReentrancyGuard {
     using SafeERC20 for IERC20;
-    IERC20 public immutable usdt;
+    IERC20 public immutable movn;
     MockToken public immutable wbmb;
     IPricePolicy public immutable policy;
     address public constant SINK = address(0xdead);
-    uint256 public totalUSDTUsed;
+    uint256 public totalMOVNUsed;
     uint256 public totalWBMBBurned;
-    event MockBuybackBurn(uint256 usdt, uint256 wbmb);
+    event MockBuybackBurn(uint256 movn, uint256 wbmb);
     constructor(address u, address w, address p) {
         require(block.chainid == 31337, "LOCAL_ONLY");
-        usdt = IERC20(u); wbmb = MockToken(w); policy = IPricePolicy(p);
+        movn = IERC20(u); wbmb = MockToken(w); policy = IPricePolicy(p);
     }
     function burnFees(uint256 amount, uint256 minWBMB, uint256 deadline) external nonReentrant {
         require(block.timestamp <= deadline && amount >= 1e12 && amount <= 1000e18, "BAD_BATCH");
         (, uint256 price) = policy.prices();
         uint256 out = Math.mulDiv(amount, 1e8, price);
         require(out > 0 && out >= minWBMB && wbmb.balanceOf(address(this)) >= out, "BAD_OUTPUT");
-        totalUSDTUsed += amount; totalWBMBBurned += out;
-        usdt.safeTransfer(SINK, amount);
+        totalMOVNUsed += amount; totalWBMBBurned += out;
+        movn.safeTransfer(SINK, amount);
         wbmb.burn(out);
         emit MockBuybackBurn(amount, out);
     }

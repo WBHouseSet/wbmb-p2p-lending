@@ -63,7 +63,7 @@ describe("P2P lending on a real local EVM", () => {
     return await f.lending.offerCount();
   }
   async function fill(id, amount = 90, who = f.lender) {
-    await tx(f.usdt.connect(who).approve(f.lending.target, us(amount)));
+    await tx(f.movn.connect(who).approve(f.lending.target, us(amount)));
     const collateral = await f.lending.quoteFill(id, us(amount));
     await tx(
       f.lending
@@ -73,12 +73,12 @@ describe("P2P lending on a real local EVM", () => {
     return await f.lending.loanCount();
   }
   async function repay(id, principal) {
-    await tx(f.usdt.connect(f.borrower).approve(f.lending.target, us(10000)));
+    await tx(f.movn.connect(f.borrower).approve(f.lending.target, us(10000)));
     await tx(f.lending.connect(f.borrower).repay(id, principal, us(10000)));
   }
   async function conserved() {
     const [u, w] = await f.lending.liabilities();
-    assert.equal(await f.usdt.balanceOf(f.lending.target), u);
+    assert.equal(await f.movn.balanceOf(f.lending.target), u);
     assert.equal(await f.wbmb.balanceOf(f.lending.target), w);
   }
 
@@ -96,7 +96,7 @@ describe("P2P lending on a real local EVM", () => {
     await conserved();
   });
   it("escrows a lender offer and transfers only a chosen partial principal", async () => {
-    await tx(f.usdt.connect(f.lender).approve(f.lending.target, us(1000)));
+    await tx(f.movn.connect(f.lender).approve(f.lending.target, us(1000)));
     await tx(
       f.lending
         .connect(f.lender)
@@ -110,8 +110,8 @@ describe("P2P lending on a real local EVM", () => {
         .connect(f.borrower)
         .fillOffer(1, us(90), collateral, (await now()) + 300),
     );
-    assert.equal(await f.usdt.balanceOf(f.addresses[1]), us(10090));
-    assert.equal(await f.lending.escrowUSDT(), us(910));
+    assert.equal(await f.movn.balanceOf(f.addresses[1]), us(10090));
+    assert.equal(await f.lending.escrowMOVN(), us(910));
     await conserved();
   });
   it("rejects unauthorized cancellation, self-fill, below minimum, overfill and expired fills", async () => {
@@ -182,10 +182,10 @@ describe("P2P lending on a real local EVM", () => {
     assert.equal((await f.lending.getLoan(id)).status, 2n);
     assert.equal(await f.lending.claimableWBMB(f.addresses[1]), wb(1));
     assert.equal(
-      await f.lending.claimableUSDT(f.addresses[2]),
+      await f.lending.claimableMOVN(f.addresses[2]),
       us(90) + interest,
     );
-    await tx(f.lending.connect(f.lender).claimUSDT());
+    await tx(f.lending.connect(f.lender).claimMOVN());
     await tx(f.lending.connect(f.borrower).claimWBMB());
     assert.equal(await f.lending.debtOf(id), 0n);
     await assert.rejects(f.lending.settle(id), /NOT_ACTIVE/);
@@ -258,7 +258,7 @@ describe("P2P lending on a real local EVM", () => {
     );
     assert.equal(before.toLender + before.toBorrower, wb(1));
     assert.equal(await f.lending.claimableWBMB(f.addresses[3]), 0n);
-    assert.equal(await f.lending.claimableUSDT(f.addresses[2]), 0n);
+    assert.equal(await f.lending.claimableMOVN(f.addresses[2]), 0n);
     await assert.rejects(f.lending.settle(id), /NOT_ACTIVE/);
     await assert.rejects(
       f.lending.connect(f.borrower).addCollateral(id, wb(1)),
@@ -336,10 +336,10 @@ describe("P2P lending on a real local EVM", () => {
     const id = await fill(await borrowOffer());
     await advance(30 * 86400);
     await repay(id, us(90));
-    const lenderClaim = await f.lending.claimableUSDT(f.addresses[2]);
+    const lenderClaim = await f.lending.claimableMOVN(f.addresses[2]);
     const fee = await f.lending.feeBalance();
     await tx(f.lending.connect(f.lender2).flushFees());
-    assert.equal(await f.usdt.balanceOf(f.burner.target), fee);
+    assert.equal(await f.movn.balanceOf(f.burner.target), fee);
     await assert.rejects(
       f.burner.burnFees(fee, 0, (await now()) + 300),
       /STALE_PRICE/,
@@ -353,7 +353,7 @@ describe("P2P lending on a real local EVM", () => {
     );
     await tx(f.burner.burnFees(fee, out, (await now()) + 300));
     assert.equal(supply - (await f.wbmb.totalSupply()), out);
-    assert.equal(await f.lending.claimableUSDT(f.addresses[2]), lenderClaim);
+    assert.equal(await f.lending.claimableMOVN(f.addresses[2]), lenderClaim);
     await assert.rejects(f.burner.burnFees(fee, out, (await now()) + 300));
     await conserved();
   });
@@ -381,7 +381,7 @@ describe("P2P lending on a real local EVM", () => {
       }),
     );
     const wrong = await deployContract("MockToken", f.admin, [
-      "Wrong USDT",
+      "Wrong MOVN",
       "X",
       6,
     ]);
@@ -454,7 +454,7 @@ describe("P2P lending on a real local EVM", () => {
         .createOffer(1, us(100), 0, us(10), (await now()) + 3600, f.terms),
       /NON_EXACT_TOKEN/,
     );
-    assert.equal(await lending.escrowUSDT(), 0n);
+    assert.equal(await lending.escrowMOVN(), 0n);
     assert.equal(await token.balanceOf(f.addresses[2]), us(1000));
   });
   it("failed outgoing transfers preserve claims and reentrant calls cannot enter lending", async () => {
@@ -487,12 +487,12 @@ describe("P2P lending on a real local EVM", () => {
     );
     await tx(lending.connect(f.lender).closeOffer(1));
     await tx(token.setFaults(true, false, zero, "0x"));
-    await assert.rejects(lending.connect(f.lender).claimUSDT());
-    assert.equal(await lending.claimableUSDT(f.addresses[2]), us(100));
-    assert.equal(await lending.totalClaimUSDT(), us(100));
+    await assert.rejects(lending.connect(f.lender).claimMOVN());
+    assert.equal(await lending.claimableMOVN(f.addresses[2]), us(100));
+    assert.equal(await lending.totalClaimMOVN(), us(100));
     await tx(token.setFaults(false, false, zero, "0x"));
-    await tx(lending.connect(f.lender).claimUSDT());
-    assert.equal(await lending.claimableUSDT(f.addresses[2]), 0n);
+    await tx(lending.connect(f.lender).claimMOVN());
+    assert.equal(await lending.claimableMOVN(f.addresses[2]), 0n);
     assert.equal(await token.balanceOf(f.addresses[2]), us(1000));
   });
   it("settlement boundary is inclusive and recovery invalidates previously eligible settlement", async () => {
@@ -505,12 +505,114 @@ describe("P2P lending on a real local EVM", () => {
     await f.lending.quoteSettlement(id);
     await refresh(110, 110);
     await assert.rejects(f.lending.settle(id), /HEALTHY/);
-    // 95 USDT against 1 WBMB at 100 USDT is the exact 95% boundary.
+    // 95 MOVN against 1 WBMB at 100 MOVN is the exact 95% boundary.
     await refresh(100, 100);
     const q = await f.lending.quoteSettlement(id);
     assert.equal(q.debt, us(95));
     assert.equal(q.toLender, wb(".95"));
     await tx(f.lending.settle(id));
     await conserved();
+  });
+
+  // MOVN's issuer can pause the token or block an address. The market must neither lose
+  // nor mint claims while that happens, and must end a loan in WBMB once grace is over.
+  async function pausableMarket() {
+    const token = await deployContract("PausableToken", f.admin, [18]);
+    const lending = await deployContract("P2PLending", f.admin, [
+      token.target,
+      f.wbmb.target,
+      f.oracle.target,
+      f.addresses[3],
+      500,
+      3600,
+      86400,
+      0,
+      7 * 86400,
+    ]);
+    for (const who of [f.addresses[1], f.addresses[2]])
+      await tx(token.mint(who, us(1000)));
+    await tx(token.connect(f.lender).approve(lending.target, us(1000)));
+    await tx(token.connect(f.borrower).approve(lending.target, us(1000)));
+    await tx(f.wbmb.connect(f.borrower).approve(lending.target, wb(10)));
+    await tx(
+      lending
+        .connect(f.borrower)
+        .createOffer(
+          0,
+          us(900),
+          wb(10),
+          us(10),
+          (await now()) + 604800,
+          f.terms,
+        ),
+    );
+    const collateral = await lending.quoteFill(1, us(90));
+    await tx(
+      lending
+        .connect(f.lender)
+        .fillOffer(1, us(90), collateral, (await now()) + 300),
+    );
+    const held = async () => {
+      const [u, w] = await lending.liabilities();
+      assert.equal(await token.balanceOf(lending.target), u);
+      assert.equal(await f.wbmb.balanceOf(lending.target), w);
+    };
+    return { token, lending, held };
+  }
+  it("a paused quote token blocks repay and new fills but changes nothing; repay works after unpause", async () => {
+    const { token, lending, held } = await pausableMarket();
+    await tx(token.setPaused(true));
+    await assert.rejects(
+      lending.connect(f.borrower).repay(1, us(90), us(1000)),
+      /PAUSED/,
+    );
+    await assert.rejects(
+      lending
+        .connect(f.lender)
+        .fillOffer(1, us(10), wb(1), (await now()) + 300),
+      /PAUSED/,
+    );
+    assert.equal((await lending.getLoan(1)).status, 1n);
+    assert.equal((await lending.getLoan(1)).principal, us(90));
+    await held();
+    await tx(token.setPaused(false));
+    await tx(lending.connect(f.borrower).repay(1, us(90), us(1000)));
+    assert.equal((await lending.getLoan(1)).status, 2n);
+    await held();
+  });
+  it("a blocked lender cannot claim MOVN but keeps the claim; others claim; WBMB claims are unaffected", async () => {
+    const { token, lending, held } = await pausableMarket();
+    await tx(lending.connect(f.borrower).repay(1, us(90), us(1000)));
+    const owed = await lending.claimableMOVN(f.addresses[2]);
+    assert.ok(owed > us(90));
+    await tx(token.setBlocked(f.addresses[2], true));
+    await assert.rejects(lending.connect(f.lender).claimMOVN(), /BLOCKED/);
+    assert.equal(await lending.claimableMOVN(f.addresses[2]), owed);
+    // The borrower's collateral claim is WBMB and does not touch the blocked token.
+    await tx(lending.connect(f.borrower).claimWBMB());
+    await tx(lending.connect(f.borrower).closeOffer(1));
+    await tx(lending.connect(f.borrower).claimWBMB());
+    // Fees still move: the fee wallet is not blocked.
+    await tx(lending.flushFees());
+    await held();
+    await tx(token.setBlocked(f.addresses[2], false));
+    await tx(lending.connect(f.lender).claimMOVN());
+    assert.equal(await lending.claimableMOVN(f.addresses[2]), 0n);
+    await held();
+  });
+  it("while the quote token stays paused past grace, the loan ends in WBMB and both sides can take their WBMB", async () => {
+    const { token, lending, held } = await pausableMarket();
+    await tx(token.setPaused(true));
+    await advance(31 * 86400 + 60);
+    await refresh(100, 100);
+    await assert.rejects(
+      lending.connect(f.borrower).repay(1, us(90), us(1000)),
+      /PAUSED/,
+    );
+    await tx(lending.settle(1));
+    assert.equal((await lending.getLoan(1)).status, 3n);
+    await tx(lending.connect(f.lender).claimWBMB());
+    await tx(lending.connect(f.borrower).claimWBMB());
+    await held();
   });
 });

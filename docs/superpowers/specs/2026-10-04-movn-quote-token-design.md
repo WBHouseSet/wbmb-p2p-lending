@@ -26,7 +26,7 @@
 4. **서명 도메인.** 카운슬 보고서의 `policyId`를 `wbmb-usdt/mobick-council/v1` → `wbmb-movn/mobick-council/v1`로 바꾼다. 가격의 의미(단위)가 바뀌었으므로 옛 보고서가 새 시장에 재사용될 수 없게 한다.
 5. **설정.** `config/bsc.mjs`의 `usdt`를 `movn`으로 교체. 배포 기록(`deployments/*.json`)의 새 기록은 `movn` 키를 쓴다. 옛 USDT 기록은 손대지 않는다(역사).
 6. **화면.** 모든 USDT 표기·안내문·토큰 링크를 MOVN으로. 위험 안내에 "MOVN 발행자는 전송을 멈추거나 주소를 막을 수 있다. 그동안 상환이 막히면 만기 뒤 정산될 수 있다"를 추가.
-7. **쓰지 않는 코드.** `SignedPricePolicy`·`report-signing`(폐기된 DEX+LBank 오라클)과 `MockFeeBurner`는 배포되지 않으므로 이름을 바꾸지 않는다.
+7. **쓰지 않는 코드.** `SignedPricePolicy`·`report-signing`(폐기된 DEX+LBank 오라클)은 배포되지 않으므로 이름을 바꾸지 않는다. `MockFeeBurner`는 데모 화면이 읽으므로 함께 바꾼다.
 8. **기존 미커밋 작업.** 정산 수수료, "직접 확인하기" 블록, 담보 힌트를 테스트로 확인한 뒤 먼저 커밋하고 그 위에서 바꾼다.
 
 ## 4. 검증

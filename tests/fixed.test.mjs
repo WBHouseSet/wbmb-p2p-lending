@@ -7,7 +7,7 @@ import { deployContract, us, wb } from "../scripts/deploy.mjs";
 // Oracle-free market: no price policy, collateral ratio fixed by the maker, maturity-only settlement.
 describe("oracle-free fixed-ratio market", () => {
   let c, provider, admin, borrower, lender, lender2, feeWallet, addr;
-  let usdt, wbmb, lending, snap, addr0;
+  let movn, wbmb, lending, snap, addr0;
   const TERMS = {
     aprBps: 1200,
     haircutBps: 0,
@@ -24,7 +24,7 @@ describe("oracle-free fixed-ratio market", () => {
   }
   async function conserved() {
     const [u, w] = await lending.liabilities();
-    assert.equal(await usdt.balanceOf(lending.target), u);
+    assert.equal(await movn.balanceOf(lending.target), u);
     assert.equal(await wbmb.balanceOf(lending.target), w);
   }
   async function borrowOffer(total = 900, collateral = 10, terms = {}) {
@@ -47,7 +47,7 @@ describe("oracle-free fixed-ratio market", () => {
     return lending.offerCount();
   }
   async function lendOffer(total = 1000, collateral = 12, terms = {}) {
-    await tx(usdt.connect(lender).approve(lending.target, us(total)));
+    await tx(movn.connect(lender).approve(lending.target, us(total)));
     await tx(
       lending
         .connect(lender)
@@ -66,7 +66,7 @@ describe("oracle-free fixed-ratio market", () => {
     return lending.offerCount();
   }
   async function lend(id, amount, who = lender) {
-    await tx(usdt.connect(who).approve(lending.target, us(amount)));
+    await tx(movn.connect(who).approve(lending.target, us(amount)));
     const collateral = await lending.quoteFill(id, us(amount));
     await tx(
       lending
@@ -95,10 +95,10 @@ describe("oracle-free fixed-ratio market", () => {
     );
     addr = async (s) => s.getAddress();
     addr0 = await feeWallet.getAddress();
-    usdt = await deployContract("MockToken", admin, ["Demo USDT", "dUSDT", 18]);
+    movn = await deployContract("MockToken", admin, ["Demo MOVN", "dMOVN", 18]);
     wbmb = await deployContract("MockToken", admin, ["Demo WBMB", "dWBMB", 8]);
     lending = await deployContract("P2PLending", admin, [
-      usdt.target,
+      movn.target,
       wbmb.target,
       ZeroAddress,
       await addr(feeWallet),
@@ -109,7 +109,7 @@ describe("oracle-free fixed-ratio market", () => {
       0,
     ]);
     for (const s of [borrower, lender, lender2]) {
-      await tx(usdt.mint(await addr(s), us(10000)));
+      await tx(movn.mint(await addr(s), us(10000)));
       await tx(wbmb.mint(await addr(s), wb(100)));
     }
     snap = await provider.send("evm_snapshot", []);
@@ -128,7 +128,7 @@ describe("oracle-free fixed-ratio market", () => {
     assert.equal(await lending.feeVault(), await addr(feeWallet));
     await assert.rejects(
       deployContract("P2PLending", admin, [
-        usdt.target,
+        movn.target,
         wbmb.target,
         ZeroAddress,
         ZeroAddress,
@@ -143,7 +143,7 @@ describe("oracle-free fixed-ratio market", () => {
     // a policy address without code is still rejected
     await assert.rejects(
       deployContract("P2PLending", admin, [
-        usdt.target,
+        movn.target,
         wbmb.target,
         await addr(lender),
         await addr(feeWallet),
@@ -175,7 +175,7 @@ describe("oracle-free fixed-ratio market", () => {
       create(borrower, 0, wb(10), { haircutBps: 1000, liquidationBps: 9500 }),
       /ORACLE_FREE_TERMS/,
     );
-    await tx(usdt.connect(lender).approve(lending.target, us(900)));
+    await tx(movn.connect(lender).approve(lending.target, us(900)));
     await assert.rejects(create(lender, 1, 0, {}), /BAD_COLLATERAL/);
   });
 
@@ -186,21 +186,21 @@ describe("oracle-free fixed-ratio market", () => {
     assert.equal((await lending.getLoan(a)).collateral, wb(1));
     assert.equal((await lending.getLoan(b)).collateral, wb(2));
     assert.equal((await lending.getOffer(id)).collateralRemaining, wb(7));
-    assert.equal(await usdt.balanceOf(await addr(borrower)), us(10270));
+    assert.equal(await movn.balanceOf(await addr(borrower)), us(10270));
     await conserved();
   });
 
   it("lend offer takes the maker's fixed ratio from each borrower and never escrows WBMB for the maker", async () => {
     const id = await lendOffer(1000, 12);
     assert.equal(await lending.escrowWBMB(), 0n);
-    assert.equal(await lending.escrowUSDT(), us(1000));
+    assert.equal(await lending.escrowMOVN(), us(1000));
     assert.equal(await lending.quoteFill(id, us(250)), wb(3));
     const loan = await borrow(id, 250);
     const l = await lending.getLoan(loan);
     assert.equal(l.collateral, wb(3));
     assert.equal(l.lender, await addr(lender));
     assert.equal(l.borrower, await addr(borrower));
-    assert.equal(await usdt.balanceOf(await addr(borrower)), us(10250));
+    assert.equal(await movn.balanceOf(await addr(borrower)), us(10250));
     // a borrower can refuse a worse ratio than quoted
     await assert.rejects(
       lending
@@ -209,14 +209,14 @@ describe("oracle-free fixed-ratio market", () => {
       /COLLATERAL_SLIPPAGE/,
     );
     await tx(lending.connect(lender).closeOffer(id));
-    assert.equal(await lending.claimableUSDT(await addr(lender)), us(750));
+    assert.equal(await lending.claimableMOVN(await addr(lender)), us(750));
     assert.equal(await lending.claimableWBMB(await addr(lender)), 0n);
     await conserved();
   });
 
   it("odd partial fills of a lend offer sum to exactly the stated collateral", async () => {
-    // 7 WBMB units (smallest) per 1000 USDT cannot divide evenly: rounding must never exceed the total
-    await tx(usdt.connect(lender).approve(lending.target, us(1000)));
+    // 7 WBMB units (smallest) per 1000 MOVN cannot divide evenly: rounding must never exceed the total
+    await tx(movn.connect(lender).approve(lending.target, us(1000)));
     await tx(
       lending
         .connect(lender)
@@ -246,21 +246,21 @@ describe("oracle-free fixed-ratio market", () => {
     await advance(30 * 86400);
     const [interest, fee, total] = await lending.quoteRepay(loan, us(900));
     assert.ok(interest > 0n && fee > 0n);
-    await tx(usdt.connect(borrower).approve(lending.target, total));
+    await tx(movn.connect(borrower).approve(lending.target, total));
     await tx(lending.connect(borrower).repay(loan, us(900), total));
     assert.equal(await lending.claimableWBMB(await addr(borrower)), wb(10));
     assert.equal(
-      await lending.claimableUSDT(await addr(lender)),
+      await lending.claimableMOVN(await addr(lender)),
       us(900) + interest,
     );
     assert.equal(await lending.feeBalance(), fee);
-    const before_ = await usdt.balanceOf(await addr(feeWallet));
+    const before_ = await movn.balanceOf(await addr(feeWallet));
     await tx(lending.connect(lender2).flushFees()); // anyone may flush; destination is fixed
-    assert.equal((await usdt.balanceOf(await addr(feeWallet))) - before_, fee);
-    await tx(lending.connect(lender).claimUSDT());
+    assert.equal((await movn.balanceOf(await addr(feeWallet))) - before_, fee);
+    await tx(lending.connect(lender).claimMOVN());
     await tx(lending.connect(borrower).claimWBMB());
     await conserved();
-    assert.equal(await usdt.balanceOf(lending.target), 0n);
+    assert.equal(await movn.balanceOf(lending.target), 0n);
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
   });
 
@@ -278,7 +278,7 @@ describe("oracle-free fixed-ratio market", () => {
     assert.equal(await lending.claimableWBMB(await addr(lender2)), 0n);
     // No price and no surplus: this market charges no settlement fee.
     assert.equal(await lending.claimableWBMB(await addr(feeWallet)), 0n);
-    assert.equal(await lending.claimableUSDT(await addr(lender)), 0n);
+    assert.equal(await lending.claimableMOVN(await addr(lender)), 0n);
     await assert.rejects(lending.settle(loan), /NOT_ACTIVE/);
     await assert.rejects(
       lending.connect(borrower).repay(loan, 0, us(1000)),
@@ -292,7 +292,7 @@ describe("oracle-free fixed-ratio market", () => {
     const loan = await lend(id, 90);
     await advance(40 * 86400);
     const [, , total] = await lending.quoteRepay(loan, us(90));
-    await tx(usdt.connect(borrower).approve(lending.target, total));
+    await tx(movn.connect(borrower).approve(lending.target, total));
     await tx(lending.connect(borrower).repay(loan, us(90), total));
     await assert.rejects(lending.settle(loan), /NOT_ACTIVE/);
     assert.equal(await lending.claimableWBMB(await addr(borrower)), wb(1));
@@ -318,7 +318,7 @@ describe("oracle-free fixed-ratio market", () => {
 
   it("rejects a fee above 10% at deployment", async () => {
     const args = (fee) => [
-      usdt.target,
+      movn.target,
       wbmb.target,
       ZeroAddress,
       addr0,
@@ -336,7 +336,7 @@ describe("oracle-free fixed-ratio market", () => {
   });
 
   it("collateral rounds up per cumulative fill and a fill that would get none is refused", async () => {
-    // 3 smallest WBMB units for 900 USDT: one unit per 300 USDT
+    // 3 smallest WBMB units for 900 MOVN: one unit per 300 MOVN
     await tx(wbmb.connect(borrower).approve(lending.target, 3n));
     await tx(
       lending
@@ -346,9 +346,9 @@ describe("oracle-free fixed-ratio market", () => {
     assert.equal(await lending.quoteFill(1, us(100)), 1n); // ceil(3*100/900)
     const first = await lend(1, 100);
     assert.equal((await lending.getLoan(first)).collateral, 1n);
-    // cumulative 200 USDT still rounds to 1 unit in total, so this fill would be unsecured
+    // cumulative 200 MOVN still rounds to 1 unit in total, so this fill would be unsecured
     await assert.rejects(lending.quoteFill(1, us(100)), /BAD_COLLATERAL/);
-    await tx(usdt.connect(lender).approve(lending.target, us(100)));
+    await tx(movn.connect(lender).approve(lending.target, us(100)));
     await assert.rejects(
       lending.connect(lender).fillOffer(1, us(100), 10n, (await now()) + 300),
       /BAD_COLLATERAL/,
@@ -391,7 +391,7 @@ describe("oracle-free fixed-ratio market", () => {
     assert.equal(await lending.minGrace(), 86400n);
 
     const quick = await deployContract("P2PLending", admin, [
-      usdt.target,
+      movn.target,
       wbmb.target,
       ZeroAddress,
       addr0,
@@ -421,7 +421,7 @@ describe("oracle-free fixed-ratio market", () => {
         .connect(borrower)
         .createOffer(0, us(90), wb(1), us(10), expiry, short),
     );
-    await tx(usdt.connect(lender).approve(quick.target, us(90)));
+    await tx(movn.connect(lender).approve(quick.target, us(90)));
     await tx(
       quick.connect(lender).fillOffer(1, us(90), wb(1), (await now()) + 300),
     );
@@ -433,7 +433,7 @@ describe("oracle-free fixed-ratio market", () => {
 
     const bad = (d, g) =>
       deployContract("P2PLending", admin, [
-        usdt.target,
+        movn.target,
         wbmb.target,
         ZeroAddress,
         addr0,

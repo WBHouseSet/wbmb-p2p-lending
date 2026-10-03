@@ -38,7 +38,7 @@ try {
     toQuantity(parseUnits("10", 18)),
   ]);
   for (const [token, value, decimals] of [
-    ["usdt", "10000", 18],
+    ["movn", "10000", 18],
     ["wbmb", "100", 8],
   ]) {
     const c = new Contract(
@@ -49,7 +49,7 @@ try {
     await (await c.mint(destination, parseUnits(value, decimals))).wait();
   }
   console.log(
-    `${destination}: 로컬 가스 10 ETH, 모의 10,000 USDT / 100 WBMB 지급 완료`,
+    `${destination}: 로컬 가스 10 ETH, 모의 10,000 MOVN / 100 WBMB 지급 완료`,
   );
 } finally {
   provider.destroy();
