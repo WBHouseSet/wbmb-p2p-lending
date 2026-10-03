@@ -1,5 +1,5 @@
 // Rehearses scripts/live-test-council.mjs on a local chain that reports chain id 56 and carries
-// the real USDT/WBMB bytecode, with a throwaway mnemonic. Nothing is sent to mainnet.
+// the real MOVN/WBMB bytecode, with a throwaway mnemonic. Nothing is sent to mainnet.
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -28,9 +28,9 @@ describe("council live test script rehearsal (local chain id 56, real token byte
   const at = (n) =>
     HDNodeWallet.fromPhrase(phrase, undefined, `m/44'/60'/0'/0/${n}`).address;
   const BAL = ["function balanceOf(address) view returns (uint256)"];
-  // 112.3 USDT per WBMB: 0.002 USDT at 50% needs ceil(0.002 / 56.15) = 0.00003562 WBMB
+  // 112.3 MOVN per WBMB: 0.002 MOVN at 50% needs ceil(0.002 / 56.15) = 0.00003562 WBMB
   const EACH = 3562n;
-  let server, local, dir, record, lendingAddress, stateFile, usdt, wbmb;
+  let server, local, dir, record, lendingAddress, stateFile, movn, wbmb;
   const lines = [];
   const log = (x) => lines.push(x);
   async function give(token, who, amount) {
@@ -93,7 +93,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
       56,
       { staticNetwork: true },
     );
-    for (const token of [BSC.usdt, BSC.wbmb]) {
+    for (const token of [BSC.movn, BSC.wbmb]) {
       await local.send("hardhat_setCode", [token, await real.getCode(token)]);
       for (let slot = 0; slot < 16; slot++) {
         const value = await real.getStorage(token, slot);
@@ -106,7 +106,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
       }
     }
     real.destroy();
-    usdt = new Contract(BSC.usdt, BAL, local);
+    movn = new Contract(BSC.movn, BAL, local);
     wbmb = new Contract(BSC.wbmb, BAL, local);
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "wbmb-live-council-"));
     stateFile = path.join(dir, "state.json");
@@ -135,7 +135,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
 
   it("refuses to start before the relay has published a price", async () => {
     await give(wbmb, at(0), parseUnits("0.0001", 8));
-    await give(usdt, at(1), parseUnits("0.01", 18));
+    await give(movn, at(1), parseUnits("0.01", 18));
     const nonce = await local.getTransactionCount(at(0));
     const r = await run({ execute: true });
     assert.equal(r.ready, false);
@@ -146,19 +146,19 @@ describe("council live test script rehearsal (local chain id 56, real token byte
   it("reports exactly what is missing and sends nothing when the wallets are not funded", async () => {
     await relay();
     await give(wbmb, at(0), 0n);
-    await give(usdt, at(1), 0n);
+    await give(movn, at(1), 0n);
     const nonce = await local.getTransactionCount(at(0));
     const r = await run({ execute: true });
     assert.equal(r.ready, false);
     assert.equal(r.problems.length, 2);
     assert.match(r.problems.join("\n"), /WBMB 0\.00008124/);
-    assert.match(r.problems.join("\n"), /USDT 0\.004/);
+    assert.match(r.problems.join("\n"), /MOVN 0\.004/);
     assert.equal(await local.getTransactionCount(at(0)), nonce);
   });
 
   it("without --execute it only prints the plan", async () => {
     await give(wbmb, at(0), parseUnits("0.0001", 8));
-    await give(usdt, at(1), parseUnits("0.01", 18));
+    await give(movn, at(1), parseUnits("0.01", 18));
     const nonce = await local.getTransactionCount(at(0));
     const r = await run({});
     assert.deepEqual([r.ready, r.executed], [true, undefined]);
@@ -187,11 +187,11 @@ describe("council live test script rehearsal (local chain id 56, real token byte
     );
     // the fee wallet is the borrower wallet, so only the interest left it
     assert.equal(
-      await usdt.balanceOf(at(0)),
+      await movn.balanceOf(at(0)),
       parseUnits("0.002", 18) - r.interest,
     );
     assert.equal(
-      await usdt.balanceOf(at(1)),
+      await movn.balanceOf(at(1)),
       parseUnits("0.008", 18) + r.interest,
     );
     // the whole cycle must fit the script's own 3.5M gas budget (0.000175 BNB at 0.05 gwei)
@@ -220,7 +220,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
     const r = await run({ settle: true, execute: true });
     assert.equal(r.settled, true);
     assert.equal(r.price, parseUnits("112.3", 18));
-    // debt = 0.002 USDT + 5 minutes at 100% APR; lender share = debt × 1.1 ÷ 112.3, rounded up
+    // debt = 0.002 MOVN + 5 minutes at 100% APR; lender share = debt × 1.1 ÷ 112.3, rounded up
     const debt =
       parseUnits("0.002", 18) +
       (parseUnits("0.002", 18) * 300n + 31536000n - 1n) / 31536000n;
@@ -241,7 +241,7 @@ describe("council live test script rehearsal (local chain id 56, real token byte
       artifact("P2PLending").abi,
       local,
     );
-    assert.equal(await usdt.balanceOf(lendingAddress), 0n);
+    assert.equal(await movn.balanceOf(lendingAddress), 0n);
     assert.equal(await wbmb.balanceOf(lendingAddress), 0n);
     assert.equal(Number((await lending.getLoan(r.loanB)).status), 3);
   });

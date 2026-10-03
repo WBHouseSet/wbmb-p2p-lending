@@ -52,18 +52,18 @@ export async function runLiveTest({
       artifact("P2PLending").abi,
       provider,
     );
-    const usdt = new Contract(BSC.usdt, ERC20, provider);
+    const movn = new Contract(BSC.movn, ERC20, provider);
     const wbmb = new Contract(BSC.wbmb, ERC20, provider);
-    const [onUsdt, onWbmb, oracleFree, minDuration, minGrace, feeVault] =
+    const [onMovn, onWbmb, oracleFree, minDuration, minGrace, feeVault] =
       await Promise.all([
-        lending.usdt(),
+        lending.movn(),
         lending.wbmb(),
         lending.oracleFree(),
         lending.minDuration(),
         lending.minGrace(),
         lending.feeVault(),
       ]);
-    if (onUsdt !== BSC.usdt || onWbmb !== BSC.wbmb || !oracleFree)
+    if (onMovn !== BSC.movn || onWbmb !== BSC.wbmb || !oracleFree)
       throw new Error("이 컨트랙트는 예상한 오라클 없는 시장이 아닙니다.");
     if (BigInt(duration) < minDuration || BigInt(grace) < minGrace)
       throw new Error(
@@ -85,17 +85,17 @@ export async function runLiveTest({
       const [bb, lb, bu, lu, bw, lw, fu] = await Promise.all([
         provider.getBalance(B),
         provider.getBalance(L),
-        usdt.balanceOf(B),
-        usdt.balanceOf(L),
+        movn.balanceOf(B),
+        movn.balanceOf(L),
         wbmb.balanceOf(B),
         wbmb.balanceOf(L),
-        usdt.balanceOf(feeVault),
+        movn.balanceOf(feeVault),
       ]);
       return { bb, lb, bu, lu, bw, lw, fu };
     };
     const show = (title, x) =>
       log(
-        `${title}\n  빌리는 지갑 ${B}: BNB ${u(x.bb)} · USDT ${u(x.bu)} · WBMB ${w(x.bw)}\n  빌려주는 지갑 ${L}: BNB ${u(x.lb)} · USDT ${u(x.lu)} · WBMB ${w(x.lw)}`,
+        `${title}\n  빌리는 지갑 ${B}: BNB ${u(x.bb)} · MOVN ${u(x.bu)} · WBMB ${w(x.bw)}\n  빌려주는 지갑 ${L}: BNB ${u(x.lb)} · MOVN ${u(x.lu)} · WBMB ${w(x.lw)}`,
       );
     const gasPrice = (await provider.getFeeData()).gasPrice;
     let gasSpent = 0n,
@@ -119,7 +119,7 @@ export async function runLiveTest({
     const conserved = async () => {
       const [lu, lw] = await lending.liabilities();
       const [hu, hw] = await Promise.all([
-        usdt.balanceOf(lendingAddress),
+        movn.balanceOf(lendingAddress),
         wbmb.balanceOf(lendingAddress),
       ]);
       if (hu < lu || hw < lw)
@@ -127,7 +127,7 @@ export async function runLiveTest({
           "컨트랙트 보유 잔액이 장부보다 적습니다. 즉시 중단합니다.",
         );
       log(
-        `  = 컨트랙트 보유 잔액 ≥ 장부 (USDT ${u(hu)}/${u(lu)}, WBMB ${w(hw)}/${w(lw)})`,
+        `  = 컨트랙트 보유 잔액 ≥ 장부 (MOVN ${u(hu)}/${u(lu)}, WBMB ${w(hw)}/${w(lw)})`,
       );
     };
     const opts = { gasPrice };
@@ -198,7 +198,7 @@ export async function runLiveTest({
       );
     if (start.lu < 2n * p)
       problems.push(
-        `빌려주는 지갑에 USDT ${u(2n * p)} 필요 (현재 ${u(start.lu)})`,
+        `빌려주는 지갑에 MOVN ${u(2n * p)} 필요 (현재 ${u(start.lu)})`,
       );
     const gasNeed = gasPrice * 3_500_000n + (lenderNeedsGas ? GAS_FLOAT : 0n);
     if (start.bb < gasNeed)
@@ -206,7 +206,7 @@ export async function runLiveTest({
         `빌리는 지갑에 BNB ${u(gasNeed)} 필요 (현재 ${u(start.bb)})`,
       );
     log(
-      `계획: 원금 ${principal} USDT · 담보 ${collateral} WBMB · 기간 ${duration / 60}분 · 유예 ${grace / 60}분 · 대출 2건(A 상환, B 미상환)`,
+      `계획: 원금 ${principal} MOVN · 담보 ${collateral} WBMB · 기간 ${duration / 60}분 · 유예 ${grace / 60}분 · 대출 2건(A 상환, B 미상환)`,
     );
     if (problems.length) {
       for (const x of problems) log("  부족: " + x);
@@ -232,8 +232,8 @@ export async function runLiveTest({
       "대출 B: 빌려주는 쪽이 게시, 빌리는 쪽이 담보를 맡기고 체결 (상환하지 않음)",
     );
     await send(
-      "USDT 승인",
-      usdt.connect(lender).approve(lendingAddress, p, opts),
+      "MOVN 승인",
+      movn.connect(lender).approve(lendingAddress, p, opts),
     );
     await send(
       "대출 제안 게시",
@@ -241,7 +241,7 @@ export async function runLiveTest({
     );
     const offerB = await lending.offerCount();
     expect(
-      "미체결 USDT 에스크로",
+      "미체결 MOVN 에스크로",
       (await lending.getOffer(offerB)).remaining,
       p,
     );
@@ -249,13 +249,13 @@ export async function runLiveTest({
       "WBMB 승인",
       wbmb.connect(borrower).approve(lendingAddress, c, opts),
     );
-    let before_ = await usdt.balanceOf(B);
+    let before_ = await movn.balanceOf(B);
     await send(
       "체결(빌리기)",
       asB.fillOffer(offerB, p, c, await deadline(), opts),
     );
     const loanB = Number(await lending.loanCount());
-    expect("빌린 지갑 USDT 증가", (await usdt.balanceOf(B)) - before_, p);
+    expect("빌린 지갑 MOVN 증가", (await movn.balanceOf(B)) - before_, p);
     const lb = await lending.getLoan(loanB);
     expect("대출 B 담보", lb.collateral, c);
     const dueAt = Number(lb.maturity) + grace;
@@ -279,8 +279,8 @@ export async function runLiveTest({
     );
     const offerA = await lending.offerCount();
     await send(
-      "USDT 승인",
-      usdt.connect(lender).approve(lendingAddress, p, opts),
+      "MOVN 승인",
+      movn.connect(lender).approve(lendingAddress, p, opts),
     );
     await send(
       "체결(빌려주기)",
@@ -291,14 +291,14 @@ export async function runLiveTest({
     await sleep(60);
     const cap = 2n * p;
     await send(
-      "USDT 승인(상환)",
-      usdt.connect(borrower).approve(lendingAddress, cap, opts),
+      "MOVN 승인(상환)",
+      movn.connect(borrower).approve(lendingAddress, cap, opts),
     );
     await send("이자만 납부", asB.repay(loanA, 0, cap, opts));
-    const paidInterest = await lending.claimableUSDT(L);
+    const paidInterest = await lending.claimableMOVN(L);
     if (paidInterest <= 0n) throw new Error("이자가 지급되지 않았습니다.");
     log(
-      `  = 지급된 이자 ${u(paidInterest)} USDT, 쌓인 수수료 ${u(await lending.feeBalance())} USDT`,
+      `  = 지급된 이자 ${u(paidInterest)} MOVN, 쌓인 수수료 ${u(await lending.feeBalance())} MOVN`,
     );
     await send("전액 상환", asB.repay(loanA, p, cap, opts));
     expect(
@@ -309,17 +309,17 @@ export async function runLiveTest({
     before_ = await wbmb.balanceOf(B);
     await send("담보 수령 claimWBMB", asB.claimWBMB(opts));
     expect("빌린 지갑 담보 반환", (await wbmb.balanceOf(B)) - before_, c);
-    before_ = await usdt.balanceOf(L);
-    const owed = await lending.claimableUSDT(L);
-    await send("원금·이자 수령 claimUSDT", asL.claimUSDT(opts));
-    expect("빌려준 지갑 USDT 수령", (await usdt.balanceOf(L)) - before_, owed);
+    before_ = await movn.balanceOf(L);
+    const owed = await lending.claimableMOVN(L);
+    await send("원금·이자 수령 claimMOVN", asL.claimMOVN(opts));
+    expect("빌려준 지갑 MOVN 수령", (await movn.balanceOf(L)) - before_, owed);
     if (owed <= p) throw new Error("대출자가 받은 금액이 원금 이하입니다.");
     const fee = await lending.feeBalance();
-    before_ = await usdt.balanceOf(feeVault);
+    before_ = await movn.balanceOf(feeVault);
     await send("수수료 이동 flushFees", asL.flushFees(opts));
     expect(
-      "수수료 지갑 USDT 증가",
-      (await usdt.balanceOf(feeVault)) - before_,
+      "수수료 지갑 MOVN 증가",
+      (await movn.balanceOf(feeVault)) - before_,
       fee,
     );
 
@@ -364,7 +364,7 @@ export async function runLiveTest({
 
 if (process.argv[1]?.endsWith("live-test.mjs")) {
   const file = process.env.DEPLOYER_KEY_FILE;
-  const recordFile = process.env.MARKET_RECORD || "deployments/bsc-test.json";
+  const recordFile = process.env.MARKET_RECORD || "deployments/bsc-movn-test.json";
   if (!file || !fs.existsSync(recordFile)) {
     console.error(
       `DEPLOYER_KEY_FILE 과 배포 기록(${recordFile})이 필요합니다.`,

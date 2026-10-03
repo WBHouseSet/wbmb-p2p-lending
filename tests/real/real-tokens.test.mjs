@@ -1,4 +1,4 @@
-// Runs P2PLending against the REAL USDT and WBMB contracts: their deployed bytecode and
+// Runs P2PLending against the REAL MOVN and WBMB contracts: their deployed bytecode and
 // storage are downloaded from BSC mainnet (read-only) and installed at the same addresses
 // on a local chain. Test balances are written straight into local storage.
 // Public RPCs do not serve the historical state a full fork needs, hence this replica.
@@ -58,8 +58,8 @@ async function give(local, token, who, amount) {
   throw new Error("balance slot not found");
 }
 
-describe("real BSC USDT and WBMB bytecode", () => {
-  let c, provider, usdt, wbmb, lending, borrower, lender, feeWallet, A;
+describe("real BSC MOVN and WBMB bytecode", () => {
+  let c, provider, movn, wbmb, lending, borrower, lender, feeWallet, A;
   const gas = {};
   const TERMS = {
     aprBps: 1200,
@@ -81,7 +81,7 @@ describe("real BSC USDT and WBMB bytecode", () => {
   }
   async function conserved() {
     const [u, w] = await lending.liabilities();
-    assert.equal(await usdt.balanceOf(lending.target), u);
+    assert.equal(await movn.balanceOf(lending.target), u);
     assert.equal(await wbmb.balanceOf(lending.target), w);
   }
 
@@ -105,16 +105,16 @@ describe("real BSC USDT and WBMB bytecode", () => {
       lender: await l.getAddress(),
       fee: await f.getAddress(),
     };
-    usdt = new Contract(BSC.usdt, ERC20, provider);
+    movn = new Contract(BSC.movn, ERC20, provider);
     wbmb = new Contract(BSC.wbmb, ERC20, provider);
-    await installRealToken(provider, real, BSC.usdt);
+    await installRealToken(provider, real, BSC.movn);
     await installRealToken(provider, real, BSC.wbmb);
     real.destroy();
     await give(provider, wbmb, A.borrower, wb(20));
-    await give(provider, usdt, A.borrower, us(100));
-    await give(provider, usdt, A.lender, us(3000));
+    await give(provider, movn, A.borrower, us(100));
+    await give(provider, movn, A.lender, us(3000));
     lending = await deployContract("P2PLending", admin, [
-      BSC.usdt,
+      BSC.movn,
       BSC.wbmb,
       ZeroAddress,
       A.fee,
@@ -140,7 +140,7 @@ describe("real BSC USDT and WBMB bytecode", () => {
   });
 
   it("real tokens have the decimals the contract requires", async () => {
-    assert.equal(await usdt.decimals(), 18n);
+    assert.equal(await movn.decimals(), 18n);
     assert.equal(await wbmb.decimals(), 8n);
     assert.equal(await wbmb.balanceOf(A.borrower), wb(20));
   });
@@ -154,37 +154,37 @@ describe("real BSC USDT and WBMB bytecode", () => {
         .createOffer(0, us(900), wb(10), us(10), (await now()) + 604800, TERMS),
     );
     assert.equal(await wbmb.balanceOf(lending.target), wb(10));
-    await tx(null, usdt.connect(lender).approve(lending.target, us(90)));
-    const before_ = await usdt.balanceOf(A.borrower);
+    await tx(null, movn.connect(lender).approve(lending.target, us(90)));
+    const before_ = await movn.balanceOf(A.borrower);
     await tx(
       "fillOffer",
       lending.connect(lender).fillOffer(1, us(90), wb(1), (await now()) + 300),
     );
-    assert.equal((await usdt.balanceOf(A.borrower)) - before_, us(90));
+    assert.equal((await movn.balanceOf(A.borrower)) - before_, us(90));
     await conserved();
     await advance(30 * 86400);
     const [interest, fee, total] = await lending.quoteRepay(1, us(90));
     assert.equal(interest, 887671232876712329n); // 90 * 12% * 30/365, rounded up
-    await tx(null, usdt.connect(borrower).approve(lending.target, total));
+    await tx(null, movn.connect(borrower).approve(lending.target, total));
     await tx("repay", lending.connect(borrower).repay(1, us(90), total));
     const w0 = await wbmb.balanceOf(A.borrower),
-      u0 = await usdt.balanceOf(A.lender),
-      f0 = await usdt.balanceOf(A.fee);
+      u0 = await movn.balanceOf(A.lender),
+      f0 = await movn.balanceOf(A.fee);
     await tx("claimWBMB", lending.connect(borrower).claimWBMB());
-    await tx("claimUSDT", lending.connect(lender).claimUSDT());
+    await tx("claimMOVN", lending.connect(lender).claimMOVN());
     await tx("flushFees", lending.flushFees());
     assert.equal((await wbmb.balanceOf(A.borrower)) - w0, wb(1));
-    assert.equal((await usdt.balanceOf(A.lender)) - u0, us(90) + interest);
-    assert.equal((await usdt.balanceOf(A.fee)) - f0, fee);
+    assert.equal((await movn.balanceOf(A.lender)) - u0, us(90) + interest);
+    assert.equal((await movn.balanceOf(A.fee)) - f0, fee);
     await tx("closeOffer", lending.connect(borrower).closeOffer(1));
     await tx(null, lending.connect(borrower).claimWBMB());
     await conserved();
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
-    assert.equal(await usdt.balanceOf(lending.target), 0n);
+    assert.equal(await movn.balanceOf(lending.target), 0n);
   });
 
   it("lend offer: borrower posts the fixed collateral, defaults, lender receives real WBMB after grace", async () => {
-    await tx(null, usdt.connect(lender).approve(lending.target, us(1000)));
+    await tx(null, movn.connect(lender).approve(lending.target, us(1000)));
     await tx(
       null,
       lending
@@ -215,10 +215,10 @@ describe("real BSC USDT and WBMB bytecode", () => {
     await tx(null, lending.connect(lender).claimWBMB());
     assert.equal((await wbmb.balanceOf(A.lender)) - w0, wb(3));
     await tx(null, lending.connect(lender).closeOffer(2));
-    await tx(null, lending.connect(lender).claimUSDT());
+    await tx(null, lending.connect(lender).claimMOVN());
     await conserved();
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
-    assert.equal(await usdt.balanceOf(lending.target), 0n);
+    assert.equal(await movn.balanceOf(lending.target), 0n);
   });
 
   it("interest-only and partial repayments, then a stranger closes the expired offer for the maker", async () => {
@@ -231,7 +231,7 @@ describe("real BSC USDT and WBMB bytecode", () => {
         .createOffer(0, us(360), wb(4), us(10), expiry, TERMS),
     );
     const offer = await lending.offerCount();
-    await tx(null, usdt.connect(lender).approve(lending.target, us(180)));
+    await tx(null, movn.connect(lender).approve(lending.target, us(180)));
     await tx(
       null,
       lending
@@ -240,11 +240,11 @@ describe("real BSC USDT and WBMB bytecode", () => {
     );
     const loan = await lending.loanCount();
     await advance(10 * 86400);
-    await tx(null, usdt.connect(borrower).approve(lending.target, us(400)));
+    await tx(null, movn.connect(borrower).approve(lending.target, us(400)));
     const [interest1] = await lending.quoteRepay(loan, 0);
     await tx(null, lending.connect(borrower).repay(loan, 0, us(400))); // interest only
     // the quote is one block old, so a second or two more interest has accrued
-    const paid = await lending.claimableUSDT(A.lender);
+    const paid = await lending.claimableMOVN(A.lender);
     assert.ok(paid >= interest1 && paid - interest1 < us("0.0001"));
     await tx(null, lending.connect(borrower).repay(loan, us(80), us(400))); // partial principal
     const l = await lending.getLoan(loan);
@@ -267,16 +267,16 @@ describe("real BSC USDT and WBMB bytecode", () => {
     const w0 = await wbmb.balanceOf(A.borrower);
     await tx(null, lending.connect(borrower).claimWBMB());
     assert.equal((await wbmb.balanceOf(A.borrower)) - w0, wb(4));
-    await tx(null, lending.connect(lender).claimUSDT());
+    await tx(null, lending.connect(lender).claimMOVN());
     await tx(null, lending.flushFees());
     await conserved();
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
-    assert.equal(await usdt.balanceOf(lending.target), 0n);
+    assert.equal(await movn.balanceOf(lending.target), 0n);
   });
 });
 
-describe("council-price market on real BSC USDT and WBMB bytecode", () => {
-  let c, provider, usdt, wbmb, lending, oracle, borrower, lender, reporter, A;
+describe("council-price market on real BSC MOVN and WBMB bytecode", () => {
+  let c, provider, movn, wbmb, lending, oracle, borrower, lender, reporter, A;
   const TERMS = {
     aprBps: 0,
     haircutBps: 5000,
@@ -324,13 +324,13 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
       lender: await l.getAddress(),
       fee: await f.getAddress(),
     };
-    usdt = new Contract(BSC.usdt, ERC20, provider);
+    movn = new Contract(BSC.movn, ERC20, provider);
     wbmb = new Contract(BSC.wbmb, ERC20, provider);
-    await installRealToken(provider, real, BSC.usdt);
+    await installRealToken(provider, real, BSC.movn);
     await installRealToken(provider, real, BSC.wbmb);
     real.destroy();
     await give(provider, wbmb, A.borrower, wb(20));
-    await give(provider, usdt, A.lender, us(3000));
+    await give(provider, movn, A.lender, us(3000));
     oracle = await deployContract("CouncilPricePolicy", admin, [
       [await r.getAddress()],
       1,
@@ -341,7 +341,7 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
     ]);
     await publish(100);
     lending = await deployContract("P2PLending", admin, [
-      BSC.usdt,
+      BSC.movn,
       BSC.wbmb,
       oracle.target,
       A.fee,
@@ -358,7 +358,7 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
   });
 
   it("fills at the council price, settles with the bonus and pays out exact token amounts", async () => {
-    await tx(usdt.connect(lender).approve(lending.target, us(1000)));
+    await tx(movn.connect(lender).approve(lending.target, us(1000)));
     await tx(
       lending
         .connect(lender)
@@ -367,13 +367,13 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
     const collateral = await lending.quoteFill(1, us(600));
     assert.equal(collateral, wb(12)); // 600 / (100 × 50%)
     await tx(wbmb.connect(borrower).approve(lending.target, collateral));
-    const usdtBefore = await usdt.balanceOf(A.borrower);
+    const movnBefore = await movn.balanceOf(A.borrower);
     await tx(
       lending
         .connect(borrower)
         .fillOffer(1, us(600), collateral, (await now()) + 300),
     );
-    assert.equal(await usdt.balanceOf(A.borrower), usdtBefore + us(600));
+    assert.equal(await movn.balanceOf(A.borrower), movnBefore + us(600));
     await publish(66); // below the 70% line (71.43); 600 × 1.1 / 66 = 10 WBMB
     await tx(lending.connect(lender).settle(1));
     const lenderBefore = await wbmb.balanceOf(A.lender);
@@ -383,11 +383,11 @@ describe("council-price market on real BSC USDT and WBMB bytecode", () => {
     assert.equal(await wbmb.balanceOf(A.lender), lenderBefore + wb(10));
     assert.equal(await wbmb.balanceOf(A.borrower), borrowerBefore + wb(2));
     await tx(lending.connect(lender).closeOffer(1));
-    await tx(lending.connect(lender).claimUSDT());
+    await tx(lending.connect(lender).claimMOVN());
     const [u, w] = await lending.liabilities();
     assert.equal(u, 0n);
     assert.equal(w, 0n);
-    assert.equal(await usdt.balanceOf(lending.target), 0n);
+    assert.equal(await movn.balanceOf(lending.target), 0n);
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
   });
 });

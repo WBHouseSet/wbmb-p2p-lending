@@ -66,16 +66,18 @@ export function loadDeployer(secret, provider, index = 0) {
 // full default-and-settle cycle can be checked in minutes. The council profiles add a price
 // policy fed by the council price relay.
 export const PROFILES = {
-  main: { file: "bsc.json", minDuration: 3600, minGrace: 86400 },
-  test: { file: "bsc-test.json", minDuration: 300, minGrace: 300 },
+  // The USDT-era markets keep their old record files (bsc.json, bsc-test.json,
+  // bsc-council-test.json); every MOVN deployment writes a -movn file.
+  main: { file: "bsc-movn.json", minDuration: 3600, minGrace: 86400 },
+  test: { file: "bsc-movn-test.json", minDuration: 300, minGrace: 300 },
   council: {
-    file: "bsc-council.json",
+    file: "bsc-council-movn.json",
     minDuration: 3600,
     minGrace: 86400,
     council: BSC.council,
   },
   "council-test": {
-    file: "bsc-council-test.json",
+    file: "bsc-council-movn-test.json",
     minDuration: 300,
     minGrace: 300,
     council: { ...BSC.council, minInterval: 300, staleSettleDelay: 300 },
@@ -104,7 +106,7 @@ export async function deployBsc({
     if (BigInt(await provider.send("eth_chainId", [])) !== BigInt(BSC.chainId))
       throw new Error("RPC가 BNB Smart Chain(56)이 아닙니다.");
     for (const [name, address, decimals] of [
-      ["USDT", BSC.usdt, 18n],
+      ["MOVN", BSC.movn, 18n],
       ["WBMB", BSC.wbmb, 8n],
     ]) {
       const token = new Contract(address, TOKEN_ABI, provider);
@@ -138,7 +140,7 @@ export async function deployBsc({
     if (
       feeWallet !== undefined &&
       (!isAddress(feeWallet) ||
-        [BSC.usdt, BSC.wbmb, ZeroAddress].includes(getAddress(feeWallet)))
+        [BSC.movn, BSC.wbmb, ZeroAddress].includes(getAddress(feeWallet)))
     )
       throw new Error(
         "FEE_WALLET 주소가 올바르지 않습니다. 직접 관리하는 지갑 주소여야 합니다.",
@@ -151,7 +153,7 @@ export async function deployBsc({
     if (
       cp &&
       (!isAddress(reporter) ||
-        [BSC.usdt, BSC.wbmb, ZeroAddress].includes(getAddress(reporter)))
+        [BSC.movn, BSC.wbmb, ZeroAddress].includes(getAddress(reporter)))
     )
       throw new Error(
         "REPORTER 에 가격 중계 지갑 주소를 지정해야 합니다. 직접 관리하는 지갑이어야 합니다.",
@@ -179,7 +181,7 @@ export async function deployBsc({
       );
     // Before the policy exists, a token address stands in so gas can still be estimated.
     const lendingArgs = (policyAddress) => [
-      BSC.usdt,
+      BSC.movn,
       BSC.wbmb,
       cp ? policyAddress : ZeroAddress,
       fee || "0x000000000000000000000000000000000000dEaD",
@@ -189,7 +191,7 @@ export async function deployBsc({
       cp ? cp.liquidationBonusBps : 0,
       cp ? cp.staleSettleDelay : 0,
     ];
-    let args = lendingArgs(BSC.usdt);
+    let args = lendingArgs(BSC.movn);
     const a = artifact("P2PLending");
     const factory = new ContractFactory(
       a.abi,
@@ -289,7 +291,7 @@ export async function deployBsc({
     log(`컨트랙트   ${address} (블록 ${receipt.blockNumber}) · 설정 확인 중…`);
     // Read back what was actually deployed instead of trusting the inputs.
     const [
-      usdt,
+      movn,
       wbmb,
       policy,
       vault,
@@ -299,7 +301,7 @@ export async function deployBsc({
       bonus,
       staleDelay,
     ] = await Promise.all([
-      contract.usdt(),
+      contract.movn(),
       contract.wbmb(),
       contract.pricePolicy(),
       contract.feeVault(),
@@ -310,7 +312,7 @@ export async function deployBsc({
       contract.staleSettleDelay(),
     ]);
     if (
-      usdt !== BSC.usdt ||
+      movn !== BSC.movn ||
       wbmb !== BSC.wbmb ||
       policy !== policyAddress ||
       vault !== fee ||
@@ -333,7 +335,7 @@ export async function deployBsc({
       profile,
       minDuration: limits.minDuration,
       minGrace: limits.minGrace,
-      usdt: BSC.usdt,
+      movn: BSC.movn,
       wbmb: BSC.wbmb,
       pricePolicy: policyAddress,
       liquidationBonusBps: Number(args[7]),
@@ -378,7 +380,17 @@ export async function deployBsc({
 }
 
 /// Web config for a live deployment record (what the page fetches as /deployment.json).
+/// Records written before 2026-10-04 carry `usdt`; a page built from one would read an
+/// undefined token address, so refuse them here rather than at the first wallet click.
+function requireMovn(record) {
+  if (!record.movn)
+    throw new Error(
+      "기록에 movn 주소가 없습니다. USDT 시절 기록은 이 빌드로 쓸 수 없습니다.",
+    );
+}
+
 export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
+  requireMovn(record);
   const council = isCouncilRecord(record);
   return {
     version: council ? 3 : 2,
@@ -396,7 +408,7 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
     feeWallet: record.feeWallet,
     feeBps: record.feeBps,
     addresses: {
-      usdt: record.usdt,
+      movn: record.movn,
       wbmb: record.wbmb,
       lending: record.lending,
       ...(council ? { oracle: record.pricePolicy } : {}),
@@ -412,10 +424,11 @@ const isCouncilRecord = (record) =>
 /// `rpcUrl` must be the URL given to liveWebConfig: the page reads every term, quote and
 /// price through it, so a fetched file may not point those reads anywhere else.
 export function livePinned(record, rpcUrl = BSC.rpcUrl) {
+  requireMovn(record);
   return {
     chainId: record.chainId,
     lending: record.lending,
-    usdt: record.usdt,
+    movn: record.movn,
     wbmb: record.wbmb,
     feeWallet: record.feeWallet,
     rpcUrl,

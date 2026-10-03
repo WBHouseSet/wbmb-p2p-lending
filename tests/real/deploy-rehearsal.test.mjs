@@ -1,5 +1,5 @@
 // Rehearses scripts/deploy-bsc.mjs end to end on a local chain that reports chain id 56 and
-// carries the real USDT/WBMB bytecode. Uses a throwaway key. Nothing is sent to mainnet.
+// carries the real MOVN/WBMB bytecode. Uses a throwaway key. Nothing is sent to mainnet.
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -43,7 +43,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       56,
       { staticNetwork: true },
     );
-    for (const token of [BSC.usdt, BSC.wbmb]) {
+    for (const token of [BSC.movn, BSC.wbmb]) {
       await local.send("hardhat_setCode", [token, await real.getCode(token)]);
       for (let slot = 0; slot < 16; slot++) {
         const value = await real.getStorage(token, slot);
@@ -80,7 +80,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(r.broadcast, false);
     assert.equal(r.from, wallet.address);
     assert.equal(await local.getTransactionCount(wallet.address), 0);
-    assert.equal(fs.existsSync(path.join(outDir, "bsc.json")), false);
+    assert.equal(fs.existsSync(path.join(outDir, "bsc-movn.json")), false);
   });
 
   it("refuses to broadcast when the wallet cannot pay for gas", async () => {
@@ -111,7 +111,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     });
     assert.equal(r.broadcast, true);
     const record = JSON.parse(
-      fs.readFileSync(path.join(outDir, "bsc.json"), "utf8"),
+      fs.readFileSync(path.join(outDir, "bsc-movn.json"), "utf8"),
     );
     assert.equal(record.lending, r.lending);
     assert.equal(record.feeWallet, wallet.address);
@@ -120,11 +120,15 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       artifact("P2PLending").abi,
       local,
     );
-    assert.equal(await lending.usdt(), BSC.usdt);
+    assert.equal(await lending.movn(), BSC.movn);
     assert.equal(await lending.wbmb(), BSC.wbmb);
     assert.equal(await lending.pricePolicy(), ZeroAddress);
     assert.equal(await lending.feeVault(), wallet.address);
     assert.equal(await lending.oracleFree(), true);
+    // The record names MOVN (never a USDT key) and the deployer printed the symbol it checked.
+    assert.equal(record.movn, BSC.movn);
+    assert.equal(record.usdt, undefined);
+    assert.match(logs.join("\n"), /MOVN/);
     const web = liveWebConfig(record);
     assert.deepEqual(
       {
@@ -139,7 +143,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.deepEqual(Object.keys(livePinned(record)), [
       "chainId",
       "lending",
-      "usdt",
+      "movn",
       "wbmb",
       "feeWallet",
       "rpcUrl",
@@ -153,6 +157,20 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.deepEqual(liveAbiNames(record), ["P2PLending"]);
   });
 
+  it("a USDT-era record (usdt key, no movn key) is refused by the web config builders", () => {
+    const record = JSON.parse(
+      fs.readFileSync(path.join(outDir, "bsc-movn.json"), "utf8"),
+    );
+    const old = {
+      ...record,
+      usdt: "0x55d398326f99059fF775485246999027B3197955",
+    };
+    delete old.movn;
+    assert.throws(() => liveWebConfig(old), /movn 주소가 없습니다/);
+    assert.throws(() => livePinned(old), /movn 주소가 없습니다/);
+    // A record whose movn is some other address is not refused here: the page compares addresses itself.
+    assert.doesNotThrow(() => liveWebConfig(record));
+  });
   it("refuses to overwrite an existing deployment record", async () => {
     await assert.rejects(
       deployBsc({
@@ -185,7 +203,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       await other.close();
     }
     const nonce = await local.getTransactionCount(wallet.address);
-    for (const bad of ["0x1234", BSC.usdt, BSC.wbmb, ZeroAddress])
+    for (const bad of ["0x1234", BSC.movn, BSC.wbmb, ZeroAddress])
       await assert.rejects(
         deployBsc({
           rpcUrl: url,
@@ -214,7 +232,8 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     });
     assert.equal(r.feeWallet, other);
     const everything =
-      logs.join("\n") + fs.readFileSync(path.join(outDir, "bsc.json"), "utf8");
+      logs.join("\n") +
+      fs.readFileSync(path.join(outDir, "bsc-movn.json"), "utf8");
     assert.equal(everything.includes(wallet.privateKey.slice(2)), false);
   });
 
@@ -286,9 +305,9 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       confirmations: 1,
       log,
     });
-    assert.equal(fs.existsSync(path.join(dir, "bsc.json")), false);
+    assert.equal(fs.existsSync(path.join(dir, "bsc-movn.json")), false);
     const record = JSON.parse(
-      fs.readFileSync(path.join(dir, "bsc-test.json"), "utf8"),
+      fs.readFileSync(path.join(dir, "bsc-movn-test.json"), "utf8"),
     );
     assert.equal(record.profile, "test");
     assert.deepEqual([record.minDuration, record.minGrace], [300, 300]);
@@ -320,7 +339,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       /REPORTER/,
     );
     await assert.rejects(
-      deployBsc({ rpcUrl: url, profile: "council", reporter: BSC.usdt, log }),
+      deployBsc({ rpcUrl: url, profile: "council", reporter: BSC.movn, log }),
       /REPORTER/,
     );
   });
@@ -338,7 +357,10 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(r.broadcast, false);
     assert.ok(r.gas > 3_000_000n);
     assert.equal(await local.getTransactionCount(wallet.address), before);
-    assert.equal(fs.existsSync(path.join(outDir, "bsc-council.json")), false);
+    assert.equal(
+      fs.existsSync(path.join(outDir, "bsc-council-movn.json")),
+      false,
+    );
   });
 
   it("council broadcast deploys the policy and the market and records both", async () => {
@@ -354,7 +376,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
       log,
     });
     const record = JSON.parse(
-      fs.readFileSync(path.join(outDir, "bsc-council-test.json"), "utf8"),
+      fs.readFileSync(path.join(outDir, "bsc-council-movn-test.json"), "utf8"),
     );
     assert.equal(record.lending, r.lending);
     assert.notEqual(record.pricePolicy, ZeroAddress);
@@ -396,7 +418,7 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     ]);
     // The oracle-free record written earlier in this file is untouched.
     assert.equal(
-      JSON.parse(fs.readFileSync(path.join(outDir, "bsc.json"), "utf8"))
+      JSON.parse(fs.readFileSync(path.join(outDir, "bsc-movn.json"), "utf8"))
         .pricePolicy,
       ZeroAddress,
     );

@@ -1,5 +1,5 @@
 // Rehearsal of the LIVE web mode: a local chain reporting chain id 56 with the real
-// USDT/WBMB bytecode, the contract deployed by the real deploy script (throwaway key),
+// MOVN/WBMB bytecode, the contract deployed by the real deploy script (throwaway key),
 // and the page running with demo=false. Nothing is sent to mainnet.
 import fs from "node:fs";
 import path from "node:path";
@@ -53,7 +53,7 @@ async function give(token, who, amount) {
 }
 let web;
 try {
-  for (const token of [BSC.usdt, BSC.wbmb]) {
+  for (const token of [BSC.movn, BSC.wbmb]) {
     await local.send("hardhat_setCode", [token, await real.getCode(token)]);
     for (let slot = 0; slot < 16; slot++) {
       const value = await real.getStorage(token, slot);
@@ -107,7 +107,7 @@ try {
     });
   const accounts = await local.send("eth_accounts", []);
   for (const who of accounts.slice(1, 3)) {
-    await give(BSC.usdt, who, us(5000));
+    await give(BSC.movn, who, us(5000));
     await give(BSC.wbmb, who, wb(50));
   }
   const publicDir = path.resolve(`.local/web-${appPort}`);

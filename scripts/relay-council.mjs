@@ -185,8 +185,8 @@ export async function relayCouncil({
 
 if (process.argv[1]?.endsWith("relay-council.mjs")) {
   const recordFile = process.argv.includes("--test-market")
-    ? "deployments/bsc-council-test.json"
-    : "deployments/bsc-council.json";
+    ? "deployments/bsc-council-movn-test.json"
+    : "deployments/bsc-council-movn.json";
   const file = process.env.RELAY_KEY_FILE;
   Promise.resolve()
     .then(() => {

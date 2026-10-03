@@ -1,11 +1,11 @@
 // Builds the static site for a live BSC deployment record (RECORD, default
-// deployments/bsc.json) into OUT_DIR (default dist-live).
+// deployments/bsc-movn.json) into OUT_DIR (default dist-live).
 import fs from "node:fs";
 import { build } from "vite";
 import { compile } from "./compile.mjs";
 import { liveAbiNames, livePinned, liveWebConfig } from "./deploy-bsc.mjs";
 
-const recordFile = process.env.RECORD || "deployments/bsc.json";
+const recordFile = process.env.RECORD || "deployments/bsc-movn.json";
 if (!fs.existsSync(recordFile))
   throw new Error(
     `${recordFile} 이 없습니다. 해당 마켓을 먼저 배포해야 합니다 (배포 방법은 docs/MAINNET.md 참고).`,

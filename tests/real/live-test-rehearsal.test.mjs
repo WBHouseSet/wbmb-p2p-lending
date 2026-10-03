@@ -1,5 +1,5 @@
 // Rehearses scripts/live-test.mjs on a local chain that reports chain id 56 and carries the
-// real USDT/WBMB bytecode, with a throwaway mnemonic. Nothing is sent to mainnet.
+// real MOVN/WBMB bytecode, with a throwaway mnemonic. Nothing is sent to mainnet.
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -27,7 +27,7 @@ describe("live test script rehearsal (local chain id 56, real token bytecode)", 
   const at = (n) =>
     HDNodeWallet.fromPhrase(phrase, undefined, `m/44'/60'/0'/0/${n}`).address;
   const BAL = ["function balanceOf(address) view returns (uint256)"];
-  let server, local, dir, lendingAddress, stateFile, usdt, wbmb;
+  let server, local, dir, lendingAddress, stateFile, movn, wbmb;
   const lines = [];
   const log = (x) => lines.push(x);
   async function give(token, who, amount) {
@@ -73,7 +73,7 @@ describe("live test script rehearsal (local chain id 56, real token bytecode)", 
       56,
       { staticNetwork: true },
     );
-    for (const token of [BSC.usdt, BSC.wbmb]) {
+    for (const token of [BSC.movn, BSC.wbmb]) {
       await local.send("hardhat_setCode", [token, await real.getCode(token)]);
       for (let slot = 0; slot < 16; slot++) {
         const value = await real.getStorage(token, slot);
@@ -86,7 +86,7 @@ describe("live test script rehearsal (local chain id 56, real token bytecode)", 
       }
     }
     real.destroy();
-    usdt = new Contract(BSC.usdt, BAL, local);
+    movn = new Contract(BSC.movn, BAL, local);
     wbmb = new Contract(BSC.wbmb, BAL, local);
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "wbmb-live-"));
     stateFile = path.join(dir, "state.json");
@@ -117,13 +117,13 @@ describe("live test script rehearsal (local chain id 56, real token bytecode)", 
     assert.equal(r.ready, false);
     assert.equal(r.problems.length, 2);
     assert.match(r.problems.join("\n"), /WBMB 0\.0002/);
-    assert.match(r.problems.join("\n"), /USDT 0\.02/);
+    assert.match(r.problems.join("\n"), /MOVN 0\.02/);
     assert.equal(await local.getTransactionCount(at(0)), nonce);
   });
 
   it("without --execute it only prints the plan", async () => {
     await give(wbmb, at(0), parseUnits("0.0002", 8));
-    await give(usdt, at(1), parseUnits("0.02", 18));
+    await give(movn, at(1), parseUnits("0.02", 18));
     const nonce = await local.getTransactionCount(at(0));
     const r = await run({});
     assert.deepEqual([r.ready, r.executed], [true, undefined]);
@@ -146,11 +146,11 @@ describe("live test script rehearsal (local chain id 56, real token bytecode)", 
     assert.equal(await wbmb.balanceOf(at(0)), parseUnits("0.0001", 8));
     // the fee wallet is the borrower wallet, so only the interest left it
     assert.equal(
-      await usdt.balanceOf(at(0)),
+      await movn.balanceOf(at(0)),
       parseUnits("0.01", 18) - r.interest,
     );
     assert.equal(
-      await usdt.balanceOf(at(1)),
+      await movn.balanceOf(at(1)),
       parseUnits("0.01", 18) + r.interest,
     );
     // the whole cycle must fit the script's own 3.5M gas budget (0.000175 BNB at 0.05 gwei)
@@ -177,7 +177,7 @@ describe("live test script rehearsal (local chain id 56, real token bytecode)", 
       artifact("P2PLending").abi,
       local,
     );
-    assert.equal(await usdt.balanceOf(lendingAddress), 0n);
+    assert.equal(await movn.balanceOf(lendingAddress), 0n);
     assert.equal(await wbmb.balanceOf(lendingAddress), 0n);
     assert.equal(Number((await lending.getLoan(r.loanB)).status), 3);
   });
