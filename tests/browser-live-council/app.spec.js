@@ -637,3 +637,76 @@ test("a borrower without enough WBMB is told so in Korean and nothing is sent", 
   await expect(poor.locator("#refresh")).toBeEnabled();
   await expect(poor.locator("#loan-count")).toHaveText(loansBefore);
 });
+
+// ---- Open on a phone wallet: no relay, no vendor. The PC shows this page as a QR; a phone
+// ---- browser without a wallet offers each wallet app's deep link into its own browser.
+const PHONE_UA =
+  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36";
+const WALLET_IDS = ["metamask", "trust", "okx", "bitget", "tokenpocket"];
+
+test("on a PC the page shows itself as a QR for a phone wallet, with each wallet's link", async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.locator("#open-on-phone")).toBeVisible();
+  await page.locator("#open-on-phone").click();
+  const dialog = page.locator("#phone-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(page.locator("#phone-qr")).toHaveAttribute(
+    "src",
+    /^data:image\/png;base64,/,
+  );
+  const target = new URL("/?wallet=1", page.url()).href;
+  await expect(page.locator("#phone-url")).toHaveText(target);
+  for (const id of WALLET_IDS)
+    await expect(dialog.locator(`[data-wallet-link="${id}"]`)).toHaveCount(1);
+  await expect(dialog.locator('[data-wallet-link="trust"]')).toHaveAttribute(
+    "href",
+    "https://link.trustwallet.com/open_url?coin_id=20000714&url=" +
+      encodeURIComponent(target),
+  );
+  await page.locator("#phone-close").click();
+  await expect(dialog).toBeHidden();
+});
+
+test("a phone browser without a wallet lists the wallet apps that can open this page", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    userAgent: PHONE_UA,
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  await page.goto("/?wallet=1");
+  await expect(page.locator("#status")).toContainText("연결 완료");
+  const choice = page.locator("#wallet-choice");
+  await expect(choice).toBeVisible();
+  const here = new URL("/?wallet=1", page.url()).href;
+  for (const id of WALLET_IDS)
+    await expect(choice.locator(`[data-wallet-link="${id}"]`)).toBeVisible();
+  await expect(choice.locator('[data-wallet-link="bitget"]')).toHaveAttribute(
+    "href",
+    "https://bkcode.vip?action=dapp&url=" + encodeURIComponent(here),
+  );
+  // No horizontal scroll on a phone.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test("inside a wallet's own browser the list stays hidden and the wallet connects directly", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    userAgent: PHONE_UA,
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  await wallet(page, 2);
+  await page.goto("/?wallet=1");
+  await expect(page.locator("#status")).toContainText("연결 완료");
+  await expect(page.locator("#wallet-choice")).toBeHidden();
+  await expect(page.locator("#open-on-phone")).toBeHidden(); // already on the phone wallet
+  await connect(page);
+});

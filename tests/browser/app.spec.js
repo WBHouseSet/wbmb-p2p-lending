@@ -22,8 +22,10 @@ test("read-only marketplace and mobile layout do not require wallet or private k
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await ready(page);
-  // The live-only MOVN risk note stays hidden on the local demo.
+  // The live-only MOVN risk note and the phone-wallet QR stay hidden on the local demo.
   await expect(page.locator("#movn-risk")).toBeHidden();
+  await expect(page.locator("#open-on-phone")).toBeHidden();
+  await expect(page.locator("#wallet-choice")).toBeHidden();
   await expect(page.locator("h1")).toContainText("조건은 우리가");
   await expect(page.locator("#verify")).toBeHidden();
   await expect(page.locator("[data-offer='2']")).toContainText("빌려드려요");

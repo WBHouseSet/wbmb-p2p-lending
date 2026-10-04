@@ -933,6 +933,29 @@ dialog::backdrop {
   border-radius: 12px;
   background: #fff;
 }
+.qr-box code {
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--muted, inherit);
+}
+.wallet-choice {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.wallet-choice h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.wallet-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
 .qr-box .row-actions {
   display: flex;
   flex-wrap: wrap;

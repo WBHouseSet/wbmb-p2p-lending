@@ -14,6 +14,7 @@ import {
   submitReport,
 } from "./report-signing.mjs";
 import { COUNCIL_POLICY_ID, submitCouncilReport } from "./council-signing.mjs";
+import { phoneUrl, walletLinks, wantsWalletChoice } from "./open-in-wallet.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
@@ -1534,6 +1535,7 @@ async function init() {
       )
       .join("");
   $("#connect-qr").hidden = config.demo || !WC_PROJECT_ID;
+  setupPhoneWallet();
   if (window.ethereum && !wallets.some((w) => w.provider === window.ethereum))
     wallets.push({
       info: { name: "브라우저 지갑" },
@@ -1546,6 +1548,41 @@ async function init() {
   await refresh();
   status(readyText(), "success");
   await restoreWallet();
+}
+// "Open on a phone wallet": the PC shows this page as a QR; a phone browser without a wallet
+// lists each wallet app's deep link into its own browser. Live builds only, no relay.
+const onPhone = () =>
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+function fillWalletLinks(url) {
+  for (const box of document.querySelectorAll("[data-wallet-links]")) {
+    box.replaceChildren(
+      ...walletLinks(url).map(({ id, name, href }) => {
+        const a = document.createElement("a");
+        a.className = "button outline small";
+        a.dataset.walletLink = id;
+        a.href = href;
+        a.rel = "noopener";
+        a.textContent = name;
+        return a;
+      }),
+    );
+  }
+}
+function setupPhoneWallet() {
+  if (config.demo) return;
+  const target = phoneUrl(location.href);
+  fillWalletLinks(target);
+  $("#open-on-phone").hidden = onPhone();
+  $("#wallet-choice").hidden = Boolean(
+    window.ethereum || !(onPhone() || wantsWalletChoice(location.href)),
+  );
+  $("#open-on-phone").onclick = async () => {
+    const QR = await import("qrcode");
+    $("#phone-qr").src = await QR.toDataURL(target, { margin: 1, width: 280 });
+    $("#phone-url").textContent = target;
+    $("#phone-dialog").showModal();
+  };
+  $("#phone-close").onclick = () => $("#phone-dialog").close();
 }
 init().catch((e) => {
   status(errorMessage(e), "error");

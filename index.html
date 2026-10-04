@@ -25,11 +25,23 @@
           aria-label="설치된 지갑 선택"
           hidden
         ></select>
+        <button id="open-on-phone" class="button outline" hidden>
+          휴대폰 지갑으로 열기
+        </button>
         <button id="connect-qr" class="button outline" hidden>QR로 연결</button>
         <button id="connect" class="button outline">지갑 연결</button>
       </div>
     </header>
     <main class="shell">
+      <section id="wallet-choice" class="wallet-choice" hidden>
+        <h2>지갑 앱에서 열기</h2>
+        <p class="note">
+          이 브라우저에는 지갑이 없습니다. 쓰는 지갑 앱을 누르면 그 앱 안의
+          브라우저에서 이 화면이 열리고, 거기서 지갑을 연결할 수 있습니다.
+          네트워크는 BNB Smart Chain 이어야 합니다.
+        </p>
+        <div class="wallet-links" data-wallet-links></div>
+      </section>
       <section class="hero">
         <div>
           <p class="eyebrow">COMMUNITY-OWNED CREDIT</p>
@@ -259,6 +271,29 @@
         </p>
         <button class="button primary full" type="submit">조건 확인하기</button>
       </form>
+    </dialog>
+    <dialog id="phone-dialog">
+      <div class="qr-box">
+        <h2>휴대폰 지갑으로 열기</h2>
+        <p class="note">
+          휴대폰 지갑 앱의 QR 스캔으로 찍으면 지갑 앱 안에서 이 화면이 열립니다.
+          일반 카메라로 찍으면 지갑 앱을 고르는 화면이 나옵니다. 외부 연결
+          서버를 쓰지 않습니다.
+        </p>
+        <img
+          id="phone-qr"
+          alt="이 화면 주소 QR 코드"
+          width="280"
+          height="280"
+        />
+        <code id="phone-url"></code>
+        <div class="wallet-links" data-wallet-links></div>
+        <div class="row-actions">
+          <button id="phone-close" class="button outline small" type="button">
+            닫기
+          </button>
+        </div>
+      </div>
     </dialog>
     <dialog id="qr-dialog">
       <div class="qr-box">
