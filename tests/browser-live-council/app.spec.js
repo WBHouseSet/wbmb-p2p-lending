@@ -119,6 +119,8 @@ test("live council page shows the relayed price and no demo controls", async ({
   const risk = page.locator("#movn-risk");
   await expect(risk).toBeVisible();
   await expect(risk).toContainText("MOVN 발행자는 전송을 멈추거나");
+  await expect(risk).toContainText("시장 컨트랙트 자체를 막으면");
+  await expect(page.locator("#movn-risk-council")).toBeVisible();
   await expect(risk).toContainText("1달러");
   // The verify block links the MOVN token to the explorer, never USDT.
   await expect(page.locator("#verify-addresses")).toContainText("MOVN 토큰");
@@ -421,15 +423,17 @@ async function pair(browser) {
   await connect(borrower);
   return { lender, borrower };
 }
-// Refresh, then wait until the page has finished re-rendering (its reads are fetches, so
-// network idle means the cards are final); clicking a card while it is being replaced makes
-// Playwright retry the click on the new element, possibly after the test moved the clock.
+// Refresh, then wait until the page has finished re-rendering (#cards carries aria-busy
+// while refresh() runs); clicking a card while it is being replaced makes Playwright retry
+// the click on the new element, possibly after the test moved the clock.
+const settled = (page) =>
+  expect(page.locator("#cards")).toHaveAttribute("aria-busy", "false");
 const mine = async (page) => {
   await expect(page.locator("#refresh")).toBeEnabled();
   await page.locator("#refresh").click();
-  await page.waitForLoadState("networkidle");
+  await settled(page);
   await page.locator('[data-tab="mine"]').click();
-  await page.waitForLoadState("networkidle");
+  await settled(page);
 };
 
 test("interest-only, then partial, then full repayment in MOVN; both sides claim; the fee wallet moves the MOVN fee", async ({
@@ -467,6 +471,9 @@ test("interest-only, then partial, then full repayment in MOVN; both sides claim
   await mine(lender);
   await expect(lender.locator(".claim-box")).toContainText("33.");
   await lender.locator('[data-action="claimMOVN"]').click();
+  await expect(lender.locator("#confirm-body")).toContainText(
+    "MOVN을 현재 연결한 지갑으로",
+  );
   await commit(lender, "MOVN 수령 완료");
   await expect(lender.locator('[data-action="claimMOVN"]')).toBeDisabled();
   // Fee wallet (account 3): the fee tab shows what accrued and moves it.
@@ -501,7 +508,7 @@ test("a lender cancels an unfilled offer and takes the MOVN back; a cancelled of
   ).toHaveCount(0);
 });
 
-test("the council price falls below the line: a third party settles, the lender gets debt + 10%, the fee wallet claims its WBMB", async ({
+test("the council price falls below the line: settlement pays the lender debt + 10%, the fee wallet claims its WBMB", async ({
   browser,
 }) => {
   const { lender, borrower } = await pair(browser);
@@ -521,15 +528,8 @@ test("the council price falls below the line: a third party settles, the lender 
   await expect(
     borrower.locator('[data-loan="4"] [data-liq-price]'),
   ).toContainText("MOVN");
-  // Anyone may settle: the fee wallet's account does it here.
-  const keeper = await browser.newPage();
-  await wallet(keeper, 3);
-  await open(keeper);
-  await connect(keeper);
-  await keeper.locator('[data-tab="borrow"]').click();
-  await keeper.locator("#refresh").click();
-  await keeper.locator('[data-tab="mine"]').click();
-  // The keeper has no loan card; settle through the borrower's card instead.
+  // The page settles from the loan card (the contract lets anyone call settle; the page
+  // only lists cards of loans the viewer is part of).
   await borrower.locator('[data-loan="4"] [data-action="settle"]').click();
   await expect(borrower.locator("#confirm-body")).toContainText(
     "보너스 10% 포함",
@@ -541,10 +541,14 @@ test("the council price falls below the line: a third party settles, the lender 
   await mine(lender);
   await lender.locator('[data-action="claimWBMB"]').click();
   await commit(lender, "WBMB 수령 완료");
-  await keeper.locator("#refresh").click();
-  await keeper.locator('[data-tab="mine"]').click();
-  await keeper.locator('[data-action="claimWBMB"]').click();
-  await commit(keeper, "WBMB 수령 완료");
+  // The fee wallet (account 3) collects the settlement fee in WBMB.
+  const fee = await browser.newPage();
+  await wallet(fee, 3);
+  await open(fee);
+  await connect(fee);
+  await fee.locator('[data-tab="mine"]').click();
+  await fee.locator('[data-action="claimWBMB"]').click();
+  await commit(fee, "WBMB 수령 완료");
 });
 
 test("a borrower who tops up before the price falls is not liquidated", async ({

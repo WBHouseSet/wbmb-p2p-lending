@@ -120,9 +120,10 @@ describe("real-chain browser check rehearsal (replica, throwaway keys)", () => {
       if (/MOVN|posted|filled|passed|failed/.test(line))
         console.log("    " + line.trim());
     assert.equal(r.status, 0, text.slice(-4000));
-    assert.match(text, /2 passed/);
+    assert.match(text, /3 passed/);
     assert.match(text, /market holds MOVN/);
-    // The key never reaches the page: the mnemonic is not in any output.
+    // The mnemonic never appears in the Playwright output (the page itself is covered by the
+    // bridge test: it only ever receives hashes and read results).
     assert.equal(
       text.includes(phrase.split(" ")[0] + " " + phrase.split(" ")[1]),
       false,

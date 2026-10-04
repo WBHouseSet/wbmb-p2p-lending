@@ -19,7 +19,7 @@ MARKET=fixed npm run dev         # 같은 시장을 모의 토큰으로 로컬 �
 MARKET=council npm run dev       # 카운슬 가격으로 청산하는 시장을 모의 토큰으로 로컬 체험
 npm run relay:council            # 카운슬 가격 중계 봇: 플래그 없이는 출력만, --broadcast 일 때만 BNB를 쓰고 전송
                                  # (한도를 넘는 변동은 하루 30%씩 자동으로 따라감: docs/MAINNET.md 8.3)
-npm run build:live:council       # deployments/bsc-council.json 으로 실전 웹 파일 생성 (전송 없음)
+npm run build:live:council       # deployments/bsc-council-movn.json 으로 실전 웹 파일 생성 (전송 없음)
 ```
 
 아래 내용은 로컬 체험 환경(가격형 시장 포함)에 대한 설명입니다.
@@ -44,7 +44,7 @@ npm run dev
 
 ## 5분 체험
 
-1. 상단 **체험 지갑 선택 → 체험 1**을 선택합니다. 100 WBMB/10,000 MOVN로 시작하며, 예시 차입 요청에 10 WBMB가 이미 잠겨 있습니다.
+1. 상단 **체험 지갑 선택 → 체험 1**을 선택합니다. 100 WBMB/10,000 MOVN으로 시작하며, 예시 차입 요청에 10 WBMB가 이미 잠겨 있습니다.
 2. **빌리기**에서 체험 2가 게시한 MOVN 대출 제안을 찾고 `90`을 입력해 **빌리기**를 누릅니다. 조건 확인 → 토큰 승인 → 실제 로컬 체결이 진행됩니다.
 3. **내 거래**에서 담보를 `0.2 WBMB` 추가합니다. 다른 대출의 담보에는 영향을 주지 않습니다.
 4. 하단 **로컬 시나리오 실험실 → 1일 경과**를 누르면 발생 이자를 확인할 수 있습니다.

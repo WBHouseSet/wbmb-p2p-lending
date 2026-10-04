@@ -675,6 +675,8 @@ async function txAction(title, message, action) {
 async function refresh() {
   if (!contracts || loading) return;
   loading = true;
+  // Screen readers and the browser tests see when the list is being rebuilt.
+  $("#cards").setAttribute("aria-busy", "true");
   try {
     const [oc, lc, block] = await Promise.all([
       contracts.lending.offerCount(),
@@ -784,6 +786,7 @@ async function refresh() {
     await render();
   } finally {
     loading = false;
+    $("#cards").setAttribute("aria-busy", "false");
   }
 }
 function offerCard(o) {
@@ -1017,7 +1020,7 @@ async function handleAction(action, id) {
       ](address);
     await txAction(
       `${unit} 수령`,
-      `${fmt(value, unit === "MOVN" ? 18 : 8, 8)} ${unit}를 현재 연결한 지갑으로 수령합니다.`,
+      `${fmt(value, unit === "MOVN" ? 18 : 8, 8)} ${unit}${unit === "MOVN" ? "을" : "를"} 현재 연결한 지갑으로 수령합니다.`,
       (ctx) => ctx.send(ctx.lending[action]()),
     );
   } else if (action === "flush") {
@@ -1373,6 +1376,7 @@ function renderVerify() {
   $("#verify-operator").textContent = OPERATOR;
   $("#verify").hidden = false;
   $("#movn-risk").hidden = false;
+  $("#movn-risk-council").hidden = !council();
 }
 
 async function init() {

@@ -226,7 +226,7 @@ describe("CouncilPricePolicy", () => {
   });
 });
 
-// The quote token is MOVN since 2026-10-04: reports signed for the MOVN-era domain must not
+// The quote token is MOVN since 2026-10-04: reports signed for the USDT-era domain must not
 // be accepted by a policy deployed under the new id, whatever else matches.
 describe("MOVN report domain", () => {
   let c, provider, admin, reporters, policy;
@@ -269,7 +269,7 @@ describe("MOVN report domain", () => {
     );
     assert.notEqual(COUNCIL_POLICY_ID, USDT_ID);
   });
-  it("a report under the old MOVN domain is refused, the same report under MOVN is accepted", async () => {
+  it("a report under the old USDT domain is refused, the same report under MOVN is accepted", async () => {
     await assert.rejects(
       submitCouncilReport(
         policy,

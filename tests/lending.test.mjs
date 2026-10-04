@@ -600,6 +600,22 @@ describe("P2P lending on a real local EVM", () => {
     assert.equal(await lending.claimableMOVN(f.addresses[2]), 0n);
     await held();
   });
+  it("a blocked fee wallet cannot be paid: flushFees reverts and the fee stays booked, lender claims unaffected", async () => {
+    const { token, lending, held } = await pausableMarket();
+    await tx(lending.connect(f.borrower).repay(1, us(90), us(1000)));
+    const fee = await lending.feeBalance();
+    assert.ok(fee > 0n);
+    await tx(token.setBlocked(f.addresses[3], true));
+    await assert.rejects(lending.flushFees(), /BLOCKED/);
+    assert.equal(await lending.feeBalance(), fee);
+    await tx(lending.connect(f.lender).claimMOVN());
+    await held();
+    await tx(token.setBlocked(f.addresses[3], false));
+    await tx(lending.flushFees());
+    assert.equal(await lending.feeBalance(), 0n);
+    assert.equal(await token.balanceOf(f.addresses[3]), fee);
+    await held();
+  });
   it("while the quote token stays paused past grace, the loan ends in WBMB and both sides can take their WBMB", async () => {
     const { token, lending, held } = await pausableMarket();
     await tx(token.setPaused(true));

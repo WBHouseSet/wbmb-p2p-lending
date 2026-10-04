@@ -15,6 +15,7 @@ import {
   keccak256,
   formatUnits,
   toBeHex,
+  JsonRpcSigner,
 } from "ethers";
 import { deployContract, us, wb } from "../../scripts/deploy.mjs";
 import { BSC } from "../../config/bsc.mjs";
@@ -389,5 +390,109 @@ describe("council-price market on real BSC MOVN and WBMB bytecode", () => {
     assert.equal(w, 0n);
     assert.equal(await movn.balanceOf(lending.target), 0n);
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
+  });
+
+  // The REAL MOVN bytecode's issuer controls, driven by impersonating its owner: pause,
+  // blacklist of a user, blacklist of the market itself. Confirms the function names the
+  // risk note relies on (pause/unpause, addToBlacklist/removeFromBlacklist, isBlacklisted).
+  describe("MOVN issuer controls on the real bytecode", () => {
+    const ISSUER = [
+      "function owner() view returns (address)",
+      "function paused() view returns (bool)",
+      "function pause()",
+      "function unpause()",
+      "function addToBlacklist(address)",
+      "function removeFromBlacklist(address)",
+      "function isBlacklisted(address) view returns (bool)",
+    ];
+    let issuer, token, snap;
+    before(async () => {
+      token = new Contract(BSC.movn, ISSUER, provider);
+      const owner = await token.owner();
+      await provider.send("hardhat_impersonateAccount", [owner]);
+      await provider.send("hardhat_setBalance", [owner, "0xDE0B6B3A7640000"]);
+      issuer = token.connect(new JsonRpcSigner(provider, owner));
+      // A live loan: lender posts 1000, borrower takes 600 at the current council price.
+      await give(provider, wbmb, A.borrower, wb(50));
+      await give(provider, movn, A.lender, us(3000));
+      await tx(movn.connect(lender).approve(lending.target, us(1000)));
+      await tx(
+        lending
+          .connect(lender)
+          .createOffer(1, us(1000), 0, us(10), (await now()) + 86400, TERMS),
+      );
+      // The previous test left the council price at 66: the quote decides the collateral.
+      const collateral = await lending.quoteFill(2, us(600));
+      await tx(wbmb.connect(borrower).approve(lending.target, collateral));
+      await tx(
+        lending
+          .connect(borrower)
+          .fillOffer(2, us(600), collateral, (await now()) + 300),
+      );
+      await tx(movn.connect(borrower).approve(lending.target, us(1000)));
+      snap = await provider.send("evm_snapshot", []);
+    });
+    const reset = async () => {
+      await provider.send("evm_revert", [snap]);
+      snap = await provider.send("evm_snapshot", []);
+    };
+    it("pause: repay and new fills revert, nothing changes; unpause restores repay", async () => {
+      await reset();
+      await tx(issuer.pause());
+      assert.equal(await token.paused(), true);
+      await assert.rejects(
+        lending.connect(borrower).repay(2, us(600), us(1000)),
+      );
+      await assert.rejects(
+        lending
+          .connect(borrower)
+          .fillOffer(2, us(10), wb(1), (await now()) + 300),
+      );
+      assert.equal((await lending.getLoan(2)).status, 1n);
+      // WBMB is a different contract: collateral top-up still works while MOVN is paused.
+      await tx(wbmb.connect(borrower).approve(lending.target, wb(1)));
+      await tx(lending.connect(borrower).addCollateral(2, wb(1)));
+      await tx(issuer.unpause());
+      await tx(lending.connect(borrower).repay(2, us(600), us(1000)));
+      assert.equal((await lending.getLoan(2)).status, 2n);
+    });
+    it("a blacklisted lender keeps the claim until unblocked; the borrower's WBMB is unaffected", async () => {
+      await reset();
+      await tx(lending.connect(borrower).repay(2, us(600), us(1000)));
+      const owed = await lending.claimableMOVN(A.lender);
+      assert.equal(owed, us(600));
+      await tx(issuer.addToBlacklist(A.lender));
+      assert.equal(await token.isBlacklisted(A.lender), true);
+      await assert.rejects(lending.connect(lender).claimMOVN());
+      assert.equal(await lending.claimableMOVN(A.lender), owed);
+      await tx(lending.connect(borrower).claimWBMB());
+      await tx(issuer.removeFromBlacklist(A.lender));
+      await tx(lending.connect(lender).claimMOVN());
+      assert.equal(await lending.claimableMOVN(A.lender), 0n);
+    });
+    it("the market contract blacklisted: every MOVN leg freezes, WBMB settlement and claims still work", async () => {
+      await reset();
+      await tx(issuer.addToBlacklist(lending.target));
+      await assert.rejects(
+        lending.connect(borrower).repay(2, us(600), us(1000)),
+      );
+      // The unfilled 400 can be withdrawn from escrow to a claim, but not paid out.
+      await tx(lending.connect(lender).closeOffer(2));
+      assert.equal(await lending.claimableMOVN(A.lender), us(400));
+      await assert.rejects(lending.connect(lender).claimMOVN());
+      // Past maturity and grace the loan still ends in WBMB, and the WBMB claims go through.
+      await provider.send("evm_increaseTime", [31 * 86400 + 60]);
+      await provider.send("evm_mine", []);
+      await publish(100);
+      await tx(lending.connect(lender).settle(2));
+      await tx(lending.connect(lender).claimWBMB());
+      await tx(lending.connect(borrower).claimWBMB());
+      const [u, w] = await lending.liabilities();
+      assert.equal(w, 0n);
+      assert.equal(await movn.balanceOf(lending.target), u); // MOVN ledger intact, just frozen
+      await tx(issuer.removeFromBlacklist(lending.target));
+      await tx(lending.connect(lender).claimMOVN());
+      assert.equal(await lending.claimableMOVN(A.lender), 0n);
+    });
   });
 });

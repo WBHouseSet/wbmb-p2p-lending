@@ -128,7 +128,10 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     // The record names MOVN (never a USDT key) and the deployer printed the symbol it checked.
     assert.equal(record.movn, BSC.movn);
     assert.equal(record.usdt, undefined);
-    assert.match(logs.join("\n"), /MOVN/);
+    assert.match(
+      logs.join("\n"),
+      /토큰 확인  MOVN 0x[0-9a-fA-F]{40} \(MOVN, 18 decimals\)/,
+    );
     const web = liveWebConfig(record);
     assert.deepEqual(
       {
@@ -170,6 +173,23 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.throws(() => livePinned(old), /movn 주소가 없습니다/);
     // A record whose movn is some other address is not refused here: the page compares addresses itself.
     assert.doesNotThrow(() => liveWebConfig(record));
+  });
+  it("a token at the MOVN address whose symbol is not MOVN is refused before anything is sent", async () => {
+    const snap = await local.send("evm_snapshot", []);
+    try {
+      // MOVN keeps its symbol in storage slot 4 (short string). Rewrite it to "FAKE": same
+      // code, same 18 decimals, so only the symbol check can catch it.
+      const fake =
+        "0x" + Buffer.from("FAKE").toString("hex").padEnd(62, "0") + "08";
+      await local.send("hardhat_setStorageAt", [BSC.movn, "0x4", fake]);
+      logs.length = 0;
+      await assert.rejects(
+        deployBsc({ rpcUrl: url, outDir, log }),
+        /MOVN 토큰 확인 실패/,
+      );
+    } finally {
+      await local.send("evm_revert", [snap]);
+    }
   });
   it("refuses to overwrite an existing deployment record", async () => {
     await assert.rejects(

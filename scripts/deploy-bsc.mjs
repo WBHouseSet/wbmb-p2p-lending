@@ -110,14 +110,17 @@ export async function deployBsc({
       ["WBMB", BSC.wbmb, 8n],
     ]) {
       const token = new Contract(address, TOKEN_ABI, provider);
+      // Code, decimals AND symbol must match: a wrong address or a swapped token stops here.
+      const symbol =
+        (await provider.getCode(address)) === "0x"
+          ? ""
+          : await token.symbol().catch(() => "");
       if (
-        (await provider.getCode(address)) === "0x" ||
-        (await token.decimals()) !== decimals
+        symbol !== name ||
+        (await token.decimals().catch(() => -1n)) !== decimals
       )
         throw new Error(`${name} 토큰 확인 실패: ${address}`);
-      log(
-        `토큰 확인  ${name} ${address} (${await token.symbol()}, ${decimals} decimals)`,
-      );
+      log(`토큰 확인  ${name} ${address} (${symbol}, ${decimals} decimals)`);
     }
     const deployer = loadDeployer(secret, provider, index);
     if (deployer) {
@@ -387,6 +390,12 @@ function requireMovn(record) {
     throw new Error(
       "기록에 movn 주소가 없습니다. USDT 시절 기록은 이 빌드로 쓸 수 없습니다.",
     );
+  // On BSC the quote token is exactly MOVN; a hand-edited record is refused here too.
+  if (
+    Number(record.chainId) === BSC.chainId &&
+    getAddress(record.movn) !== BSC.movn
+  )
+    throw new Error(`기록의 movn 주소가 MOVN(${BSC.movn})이 아닙니다.`);
 }
 
 export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {

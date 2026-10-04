@@ -101,7 +101,7 @@
         </nav>
         <div id="tab-description" class="tab-description"></div>
         <div id="market-terms" class="market-terms" hidden></div>
-        <div id="cards" class="cards"></div>
+        <div id="cards" class="cards" aria-busy="false"></div>
         <button id="load-more" class="button outline" hidden>
           이전 거래 더 보기
         </button>
@@ -156,10 +156,15 @@
       </section>
       <p id="movn-risk" class="note warning" hidden>
         MOVN은 발행자가 있는 토큰입니다. MOVN 발행자는 전송을 멈추거나 특정
-        주소를 막을 수 있습니다. 그동안에는 상환과 수령이 되지 않고, 기한이
-        지나면 담보가 WBMB로 정산될 수 있습니다. 이 시장은 카운슬 가격을 따르며
-        카운슬은 MOVN 1개를 1달러로 봅니다. MOVN 시세가 1달러에서 크게 벗어나면
-        청산 기준도 그만큼 어긋납니다.
+        주소를 막을 수 있습니다. 그동안에는 MOVN 상환과 MOVN 수령이 되지 않고
+        (WBMB 수령은 됩니다), 기한이 지나면 담보가 WBMB로 정산될 수 있습니다.
+        발행자가 시장 컨트랙트 자체를 막으면 맡겨진 MOVN과 수령 대기 MOVN이
+        한꺼번에 묶입니다.
+        <span id="movn-risk-council" hidden
+          >이 시장은 카운슬 가격을 따르며 카운슬은 MOVN 1개를 1달러로 봅니다.
+          MOVN 시세가 1달러에서 크게 벗어나면 청산 기준도 그만큼
+          어긋납니다.</span
+        >
       </p>
       <footer>
         <span id="footer-version">WBMB Commons · 로컬 프로토타입 v0.1</span

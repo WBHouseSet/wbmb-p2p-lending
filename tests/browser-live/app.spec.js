@@ -95,6 +95,12 @@ test("live page warns about real funds and hides every demo control", async ({
     "아직 열린 거래가 없습니다",
   );
   await expectVerifyBlock(page, ["lending", "wbmb", "movn"]);
+  // The MOVN risk note is shown, but its council-price sentence only on a council market.
+  const risk = page.locator("#movn-risk");
+  await expect(risk).toBeVisible();
+  await expect(risk).toContainText("MOVN 발행자는 전송을 멈추거나");
+  await expect(risk).toContainText("시장 컨트랙트 자체를 막으면");
+  await expect(page.locator("#movn-risk-council")).toBeHidden();
   expect(errors).toEqual([]);
 });
 

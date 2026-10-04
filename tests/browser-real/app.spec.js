@@ -11,8 +11,15 @@
 // relayed price, which scripts/live-test-council.mjs --settle already covers.
 import { test, expect } from "@playwright/test";
 import fs from "node:fs";
-import { Contract, JsonRpcProvider, formatUnits, parseUnits } from "ethers";
+import {
+  Contract,
+  Interface,
+  JsonRpcProvider,
+  formatUnits,
+  parseUnits,
+} from "ethers";
 import { loadDeployer } from "../../scripts/deploy-bsc.mjs";
+import { artifact } from "../../scripts/deploy.mjs";
 
 test.describe.configure({ mode: "serial" });
 const { WEB_URL, RPC_URL, KEY_FILE, RECORD } = process.env;
@@ -37,6 +44,51 @@ const movn = new Contract(record.movn, ERC20, provider);
 const wbmb = new Contract(record.wbmb, ERC20, provider);
 const LEND = "0.02"; // MOVN per loan; the borrower pledges ≈ 0.02 / (price × 0.5) WBMB
 
+// What the page may legitimately ask the wallet to sign: an exact, small approval of the
+// market on one of the two tokens, or one of the market's own user functions. Anything
+// else (a transfer, an approval to a stranger, an unknown contract) is refused here.
+const ERC20_IFACE = new Interface([
+  "function approve(address spender, uint256 value)",
+]);
+const MARKET_IFACE = new Interface(artifact("P2PLending").abi);
+const MARKET_CALLS = new Set([
+  "createOffer",
+  "fillOffer",
+  "closeOffer",
+  "addCollateral",
+  "repay",
+  "settle",
+  "claimMOVN",
+  "claimWBMB",
+  "flushFees",
+]);
+const APPROVAL_CAP = {
+  [record.movn.toLowerCase()]: parseUnits("1", 18),
+  [record.wbmb.toLowerCase()]: parseUnits("1", 8),
+};
+function checkCalldata(to, data, value) {
+  const target = String(to).toLowerCase();
+  if (value && BigInt(value) !== 0n) throw new Error("refused: value transfer");
+  if (target in APPROVAL_CAP) {
+    const call = ERC20_IFACE.parseTransaction({ data });
+    if (
+      !call ||
+      call.name !== "approve" ||
+      call.args.spender.toLowerCase() !== record.lending.toLowerCase() ||
+      call.args.value > APPROVAL_CAP[target]
+    )
+      throw new Error(`refused: token call ${data.slice(0, 10)} on ${to}`);
+    return;
+  }
+  if (target === record.lending.toLowerCase()) {
+    const call = MARKET_IFACE.parseTransaction({ data });
+    if (!call || !MARKET_CALLS.has(call.name))
+      throw new Error(`refused: market call ${data.slice(0, 10)}`);
+    return;
+  }
+  throw new Error(`refused: unexpected transaction target ${to}`);
+}
+
 // A mock EIP-1193 provider: reads go straight to the RPC, signing requests come back here.
 async function wallet(page, index) {
   const w = signer(index);
@@ -50,12 +102,7 @@ async function wallet(page, index) {
         const { from, to, data, value, gas } = params[0];
         if (from.toLowerCase() !== w.address.toLowerCase())
           throw new Error("wrong from");
-        // The page must only ever ask this wallet to talk to the market or its two tokens.
-        const allowed = [record.lending, record.movn, record.wbmb].map((a) =>
-          a.toLowerCase(),
-        );
-        if (!allowed.includes(to.toLowerCase()))
-          throw new Error(`unexpected transaction target ${to}`);
+        checkCalldata(to, data, value);
         const tx = await w.sendTransaction({
           to,
           data,
@@ -64,7 +111,9 @@ async function wallet(page, index) {
         });
         return tx.hash;
       }
-      if (method === "personal_sign") return w.signMessage(params[0]);
+      // The page never asks for message or typed-data signatures.
+      if (method === "personal_sign" || method.startsWith("eth_signTypedData"))
+        throw new Error(`refused: ${method}`);
       if (method === "wallet_switchEthereumChain") return null;
       return provider.send(method, params);
     },
@@ -90,6 +139,10 @@ async function balances(label, who) {
   );
   return { m, b, bnb };
 }
+// #cards carries aria-busy="true" while the page's refresh() runs; wait for it to clear
+// before reading or clicking cards.
+const settled = (page) =>
+  expect(page.locator("#cards")).toHaveAttribute("aria-busy", "false");
 async function open(page) {
   await page.goto(WEB_URL);
   await expect(page.locator("#status")).toContainText("연결 완료");
@@ -102,7 +155,7 @@ async function commit(page, done) {
   await expect(page.locator("#status")).toContainText(done, {
     timeout: 180000,
   });
-  await page.waitForLoadState("networkidle");
+  await settled(page);
 }
 async function post(page) {
   await page.locator("#open-offer").click();
@@ -112,14 +165,14 @@ async function post(page) {
   await page.locator('#offer-form button[type="submit"]').click();
   await commit(page, "거래 게시 완료");
   await page.locator('[data-tab="mine"]').click();
-  await page.waitForLoadState("networkidle");
+  await settled(page);
   return page.locator("#cards [data-offer]").first().getAttribute("data-offer");
 }
 const mine = async (page) => {
   await page.locator("#refresh").click();
-  await page.waitForLoadState("networkidle");
+  await settled(page);
   await page.locator('[data-tab="mine"]').click();
-  await page.waitForLoadState("networkidle");
+  await settled(page);
 };
 
 test.afterEach(async ({ browser }) => {
@@ -159,6 +212,60 @@ test("the page refuses a wallet on another chain and shows the market's own addr
   await expect(page.locator("#movn-risk")).toBeVisible();
 });
 
+// The bridge signs with real keys, so it must refuse anything the page never legitimately
+// asks for, even if the page (or something injected into it) tries.
+test("the wallet bridge refuses approvals to strangers, unknown market calls and message signing", async ({
+  browser,
+}) => {
+  const page = await browser.newPage();
+  const from = await wallet(page, 1);
+  await page.goto(WEB_URL);
+  await expect(page.locator("#status")).toContainText("연결 완료");
+  const attempt = (params) =>
+    page.evaluate(async ({ method, params }) => {
+      try {
+        await window.ethereum.request({ method, params });
+        return "accepted";
+      } catch (e) {
+        return "refused: " + (e.message || String(e));
+      }
+    }, params);
+  const stranger = "0x000000000000000000000000000000000000dEaD";
+  const approveStranger =
+    "0x095ea7b3" +
+    stranger.slice(2).toLowerCase().padStart(64, "0") +
+    "f".repeat(64);
+  expect(
+    await attempt({
+      method: "eth_sendTransaction",
+      params: [{ from, to: record.movn, data: approveStranger }],
+    }),
+  ).toMatch(/^refused/);
+  expect(
+    await attempt({
+      method: "eth_sendTransaction",
+      params: [{ from, to: stranger, data: "0x" }],
+    }),
+  ).toMatch(/^refused/);
+  // transfer(stranger, 1) aimed at the token: not an approval to the market.
+  const transferStranger =
+    "0xa9059cbb" +
+    stranger.slice(2).toLowerCase().padStart(64, "0") +
+    "1".padStart(64, "0");
+  expect(
+    await attempt({
+      method: "eth_sendTransaction",
+      params: [{ from, to: record.wbmb, data: transferStranger }],
+    }),
+  ).toMatch(/^refused/);
+  expect(
+    await attempt({ method: "personal_sign", params: ["0x1234", from] }),
+  ).toMatch(/^refused/);
+  expect(
+    await attempt({ method: "eth_signTypedData_v4", params: [from, "{}"] }),
+  ).toMatch(/^refused/);
+});
+
 test("lender posts, borrower fills and repays, both claim; a second post is cancelled and reclaimed", async ({
   browser,
 }) => {
@@ -180,7 +287,7 @@ test("lender posts, borrower fills and repays, both claim; a second post is canc
   await wallet(borrower, 0);
   await open(borrower);
   await borrower.locator('[data-tab="borrow"]').click();
-  await borrower.waitForLoadState("networkidle");
+  await settled(borrower);
   await borrower.locator(`[data-fill-amount="${offer}"]`).fill(LEND);
   await borrower
     .locator(`[data-offer="${offer}"] [data-action="fill"]`)
