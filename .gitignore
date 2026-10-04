@@ -16,3 +16,4 @@ dist-live-council/
 dist-live-council-test/
 *.key
 deployments/*.local.json
+dist-live-council-test-usdt/

@@ -42,7 +42,9 @@ const signer = (i) => loadDeployer(secret, provider, i);
 const ERC20 = ["function balanceOf(address) view returns (uint256)"];
 const movn = new Contract(record.movn, ERC20, provider);
 const wbmb = new Contract(record.wbmb, ERC20, provider);
-const LEND = "0.02"; // MOVN per loan; the borrower pledges ≈ 0.02 / (price × 0.5) WBMB
+// MOVN per loan (LEND env); the borrower pledges ≈ LEND / (price × 0.5) WBMB, so the
+// default fits a borrower holding ~0.00006 WBMB at a council price near 112.
+const LEND = process.env.LEND || "0.003";
 
 // What the page may legitimately ask the wallet to sign: an exact, small approval of the
 // market on one of the two tokens, or one of the market's own user functions. Anything
@@ -273,14 +275,41 @@ test("lender posts, borrower fills and repays, both claim; a second post is canc
     L = signer(1).address;
   const b0 = await balances("start borrower", B),
     l0 = await balances("start lender", L);
-  expect(l0.m).toBeGreaterThanOrEqual(parseUnits("0.04", 18));
+  expect(l0.m).toBeGreaterThanOrEqual(2n * parseUnits(LEND, 18));
   expect(b0.m).toBeGreaterThanOrEqual(parseUnits("0.001", 18)); // interest + fee
-  expect(b0.b).toBeGreaterThan(0n);
 
   const lender = await browser.newPage();
   await wallet(lender, 1);
   await open(lender);
+  // Earlier runs may have left this lender's posts open: reclaim them through the page first.
+  await lender.locator('[data-tab="mine"]').click();
+  await settled(lender);
+  for (;;) {
+    const close = lender
+      .locator('#cards [data-offer] [data-action="close"]')
+      .first();
+    if ((await close.count()) === 0) break;
+    await close.click();
+    await commit(lender, "미체결분 회수 완료");
+    await lender.locator('[data-tab="mine"]').click();
+    await settled(lender);
+  }
+  if (await lender.locator('[data-action="claimMOVN"]').isEnabled()) {
+    await lender.locator('[data-action="claimMOVN"]').click();
+    await commit(lender, "MOVN 수령 완료");
+  }
+  const l0b = await balances("lender after cleanup", L);
   const offer = await post(lender);
+  // The borrower must hold the collateral this fill needs, or the run would only prove the
+  // balance check (covered on the replica).
+  const lending = new Contract(
+    record.lending,
+    ["function quoteFill(uint256,uint256) view returns (uint256)"],
+    provider,
+  );
+  const need = await lending.quoteFill(offer, parseUnits(LEND, 18));
+  console.log(`collateral needed ${formatUnits(need, 8)} WBMB`);
+  expect(b0.b).toBeGreaterThanOrEqual(need);
   console.log(`posted offer #${offer}`);
 
   const borrower = await browser.newPage();
@@ -327,7 +356,7 @@ test("lender posts, borrower fills and repays, both claim; a second post is canc
   expect(b1.b).toBe(b0.b); // collateral came back whole
   expect(b1.m).toBeLessThan(b0.m); // interest + fee paid
   expect(b1.m).toBeGreaterThan(b0.m - parseUnits("0.001", 18));
-  expect(l1.m).toBeGreaterThan(l0.m); // principal back plus interest
+  expect(l1.m).toBeGreaterThan(l0b.m); // principal back plus interest
   const held = await movn.balanceOf(record.lending);
   console.log(
     `market holds MOVN ${formatUnits(held, 18)} (fee not yet flushed)`,

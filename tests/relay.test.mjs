@@ -562,14 +562,18 @@ describe("relay CLI record selection", () => {
   });
   it("without RELAY_RECORD, --test-market reads the MOVN council test record", async () => {
     const { spawnSync } = await import("node:child_process");
+    // Run from an empty directory: the record path is relative to the working directory,
+    // so the CLI reports the file it looked for (the real record now exists in the repo).
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "relay-cli-"));
     const r = spawnSync(
       "node",
-      ["scripts/relay-council.mjs", "--test-market"],
-      {
-        env: { ...process.env, RELAY_RECORD: "" },
-        encoding: "utf8",
-      },
+      [path.resolve("scripts/relay-council.mjs"), "--test-market"],
+      { cwd, env: { ...process.env, RELAY_RECORD: "" }, encoding: "utf8" },
     );
+    fs.rmSync(cwd, { recursive: true, force: true });
     assert.match(r.stderr + r.stdout, /bsc-council-movn-test\.json/);
   });
 });

@@ -640,6 +640,16 @@ async function txAction(title, message, action) {
     };
     const approve = async (token, value) => {
       await assertSession();
+      // Without enough tokens the transfer would revert inside gas estimation and the wallet
+      // would show a raw error; say what is missing before anything is sent.
+      const held = await token.balanceOf(activeAddress);
+      if (held < value) {
+        const [unit, decimals] =
+          token === contracts.wbmb ? ["WBMB", 8] : ["MOVN", 18];
+        throw new Error(
+          `지갑의 ${unit} 잔액이 부족합니다. 필요 ${full(value, decimals)} ${unit} · 보유 ${full(held, decimals)} ${unit}`,
+        );
+      }
       const contract = token.connect(activeSigner),
         current = await token.allowance(
           activeAddress,

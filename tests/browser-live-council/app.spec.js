@@ -606,3 +606,34 @@ test("with the council price expired, a loan past grace settles only after the s
   await lender.locator('[data-action="claimWBMB"]').click();
   await commit(lender, "WBMB 수령 완료");
 });
+
+// A wallet without enough tokens gets a plain answer before anything is sent, not a raw
+// "missing revert data" from gas estimation (seen on BSC with a WBMB-poor borrower).
+test("a borrower without enough WBMB is told so in Korean and nothing is sent", async ({
+  browser,
+}) => {
+  await relay(60); // the previous test left the price expired; a fresh report reopens fills
+  const lender = await browser.newPage();
+  await wallet(lender, 2);
+  await open(lender);
+  await connect(lender);
+  await post(lender, "5"); // offer 10
+  const poor = await browser.newPage();
+  await wallet(poor, 3); // the fee wallet: no WBMB at all
+  await open(poor);
+  await connect(poor);
+  const loansBefore = await poor.locator("#loan-count").textContent();
+  await poor.locator("#refresh").click();
+  await settled(poor);
+  await poor.locator('[data-tab="borrow"]').click();
+  await poor.locator('[data-fill-amount="10"]').fill("5");
+  await poor.locator('[data-offer="10"] [data-action="fill"]').click();
+  await expect(poor.locator("#confirm-dialog")).toBeVisible();
+  await poor.locator("#confirm-submit").click();
+  await expect(poor.locator("#status")).toContainText(
+    "지갑의 WBMB 잔액이 부족합니다",
+  );
+  await expect(poor.locator("#status")).not.toContainText("revert");
+  await expect(poor.locator("#refresh")).toBeEnabled();
+  await expect(poor.locator("#loan-count")).toHaveText(loansBefore);
+});
