@@ -1,0 +1,56 @@
+{
+  "network": "bsc",
+  "chainId": 56,
+  "lending": "0x096473c0384563562528B2bF9c74003abC438bF4",
+  "deployer": "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
+  "feeWallet": "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
+  "feeBps": 500,
+  "profile": "council-test",
+  "minDuration": 300,
+  "minGrace": 300,
+  "movn": "0x200b63AA750c901892d4DCf82439860F9C270274",
+  "wbmb": "0x9E4c611B834672c3643D9818249366bf65ae4C86",
+  "pricePolicy": "0x551E548b558c7c7502D60D0bcF97e45C0441bA1c",
+  "liquidationBonusBps": 1000,
+  "staleSettleDelay": 300,
+  "settlementFee": true,
+  "policyTxHash": "0xf32b82002da546d99cca5c31224bb422d4923e766183db9d1ffae7ee9ecd95ef",
+  "council": {
+    "reporter": "0x8C8C0CA56674307802ECcA32cAEA04d80355a47B",
+    "policyId": "0x76aae224289e03dc03e8dc174a46788c87918347a50facd79172210a74584c92",
+    "maxAge": 518400,
+    "maxChangeBps": 3000,
+    "minInterval": 300
+  },
+  "policyConstructorArgs": [
+    [
+      "0x8C8C0CA56674307802ECcA32cAEA04d80355a47B"
+    ],
+    "1",
+    "0x76aae224289e03dc03e8dc174a46788c87918347a50facd79172210a74584c92",
+    "518400",
+    "3000",
+    "300"
+  ],
+  "txHash": "0xa937382faebbcbe831d0e71ee45d3dee668b33e9b1931bec634c0370c50dd7a4",
+  "blockNumber": 125630686,
+  "gasUsed": "3177367",
+  "deployedAt": "2026-10-04T06:46:12.281Z",
+  "compiler": {
+    "solc": "0.8.37",
+    "optimizerRuns": 200,
+    "viaIR": true,
+    "evmVersion": "cancun"
+  },
+  "constructorArgs": [
+    "0x200b63AA750c901892d4DCf82439860F9C270274",
+    "0x9E4c611B834672c3643D9818249366bf65ae4C86",
+    "0x551E548b558c7c7502D60D0bcF97e45C0441bA1c",
+    "0xe576c288b7a714d8a8334255eE5fdbE5de4F0D59",
+    "500",
+    "300",
+    "300",
+    "1000",
+    "300"
+  ]
+}
