@@ -547,3 +547,29 @@ describe("relayCouncil with the deployed limits, on a local chain", () => {
     assert.equal((await run(180, T2)).action, "none");
   });
 });
+
+// The CLI's record file can be overridden, so an operator can keep relaying to an older
+// market (the USDT-era council test market) while new deployments write -movn records.
+describe("relay CLI record selection", () => {
+  it("RELAY_RECORD names the record file the CLI reads", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const r = spawnSync("node", ["scripts/relay-council.mjs"], {
+      env: { ...process.env, RELAY_RECORD: "deployments/does-not-exist.json" },
+      encoding: "utf8",
+    });
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr + r.stdout, /deployments\/does-not-exist\.json/);
+  });
+  it("without RELAY_RECORD, --test-market reads the MOVN council test record", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const r = spawnSync(
+      "node",
+      ["scripts/relay-council.mjs", "--test-market"],
+      {
+        env: { ...process.env, RELAY_RECORD: "" },
+        encoding: "utf8",
+      },
+    );
+    assert.match(r.stderr + r.stdout, /bsc-council-movn-test\.json/);
+  });
+});

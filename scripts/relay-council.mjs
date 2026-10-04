@@ -3,7 +3,7 @@
 //
 //   Dry run (sends nothing):   RELAY_KEY_FILE=/path/key npm run relay:council
 //   Real submission:           RELAY_KEY_FILE=/path/key npm run relay:council -- --broadcast
-//   Test market:               add --test-market
+//   Test market:               add --test-market (or RELAY_RECORD=deployments/<record>.json)
 //   Operator only:             add --step (never on the timer; see docs/MAINNET.md 8.3)
 //
 // When the council price is further from the on-chain price than the contract accepts in one
@@ -184,9 +184,13 @@ export async function relayCouncil({
 }
 
 if (process.argv[1]?.endsWith("relay-council.mjs")) {
-  const recordFile = process.argv.includes("--test-market")
-    ? "deployments/bsc-council-movn-test.json"
-    : "deployments/bsc-council-movn.json";
+  // RELAY_RECORD overrides the record file (e.g. to keep serving the USDT-era council test
+  // market, deployments/bsc-council-test.json). The relay signs with the policy's own id.
+  const recordFile =
+    process.env.RELAY_RECORD ||
+    (process.argv.includes("--test-market")
+      ? "deployments/bsc-council-movn-test.json"
+      : "deployments/bsc-council-movn.json");
   const file = process.env.RELAY_KEY_FILE;
   Promise.resolve()
     .then(() => {
