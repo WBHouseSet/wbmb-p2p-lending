@@ -22,11 +22,8 @@ test("read-only marketplace and mobile layout do not require wallet or private k
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await ready(page);
-  // The live-only MOVN risk note and the phone-wallet QR stay hidden on the local demo.
+  // The live-only MOVN risk note stays hidden on the local demo.
   await expect(page.locator("#movn-risk")).toBeHidden();
-  await expect(page.locator("#open-on-phone")).toBeHidden();
-  await expect(page.locator("#wallet-choice")).toBeHidden();
-  await expect(page.locator("h1")).toContainText("조건은 우리가");
   await expect(page.locator("#verify")).toBeHidden();
   await expect(page.locator("[data-offer='2']")).toContainText("빌려드려요");
   await page.locator("#open-offer").click();
@@ -37,6 +34,13 @@ test("read-only marketplace and mobile layout do not require wallet or private k
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  // On a phone the first offer can be taken without scrolling.
+  await expect(page.locator('[data-tab="borrow"]')).toBeInViewport({
+    ratio: 1,
+  });
+  await expect(
+    page.locator("[data-offer='2'] [data-action='fill']"),
+  ).toBeInViewport({ ratio: 1 });
   await page.screenshot({
     path: "test-results/mobile-market.png",
     fullPage: true,
@@ -115,10 +119,12 @@ test("new proposal, confirmation cancellation and unfilled escrow withdrawal", a
 }) => {
   await ready(page);
   await account(page, 3);
+  // Opened from the lending tab, the form is a lend offer, and stays one when reopened.
+  await page.locator('[data-tab="lend"]').click();
   await page.locator("#open-offer").click();
+  await expect(page.locator('[name="side"]')).toHaveValue("1");
   await page.locator('[name="mode"]').selectOption("1");
   await expect(page.locator("#mode-warning")).toBeVisible();
-  await page.locator('[name="side"]').selectOption("1");
   await expect(page.locator("#collateral-field")).not.toBeVisible();
   await page.locator('#offer-form button[type="submit"]').click();
   await page.locator("#confirm-cancel").click();

@@ -317,7 +317,10 @@ test("lender posts, borrower fills and repays, both claim; a second post is canc
   await open(borrower);
   await borrower.locator('[data-tab="borrow"]').click();
   await settled(borrower);
-  await borrower.locator(`[data-fill-amount="${offer}"]`).fill(LEND);
+  // The offer is all-or-nothing, so the collateral field already holds what LEND needs.
+  await expect(
+    borrower.locator(`[data-fill-preview="${offer}"]`),
+  ).toContainText(`${LEND} MOVN`);
   await borrower
     .locator(`[data-offer="${offer}"] [data-action="fill"]`)
     .click();

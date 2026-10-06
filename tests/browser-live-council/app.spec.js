@@ -11,13 +11,20 @@ test.afterEach(async ({ browser }) => {
 });
 // Mock EIP-1193 wallet backed by an unlocked local account. `index` picks the account.
 // `rejectAfter` ≥ 0: the wallet refuses (code 4001) every eth_sendTransaction after that many.
-async function wallet(page, index, { rejectAfter = -1 } = {}) {
+// `holdSends`: the wallet never answers an eth_sendTransaction (its prompt is left open).
+async function wallet(
+  page,
+  index,
+  { rejectAfter = -1, holdSends = false } = {},
+) {
   await page.addInitScript(
-    ({ rpc, index, rejectAfter }) => {
+    ({ rpc, index, rejectAfter, holdSends }) => {
       const listeners = {};
       let sent = 0;
       window.ethereum = {
         request: async ({ method, params = [] }) => {
+          if (method === "eth_sendTransaction" && holdSends)
+            return new Promise(() => {});
           if (
             method === "eth_sendTransaction" &&
             rejectAfter >= 0 &&
@@ -44,7 +51,7 @@ async function wallet(page, index, { rejectAfter = -1 } = {}) {
         removeListener: (name) => delete listeners[name],
       };
     },
-    { rpc: RPC, index, rejectAfter },
+    { rpc: RPC, index, rejectAfter, holdSends },
   );
 }
 async function open(page) {
@@ -146,7 +153,11 @@ test("lender posts, borrower fills at the council price and tops up", async ({
   await open(borrower);
   await connect(borrower);
   await borrower.locator('[data-tab="borrow"]').click();
-  await borrower.locator('[data-fill-amount="1"]').fill("561.5");
+  // The borrower types the collateral; the loan is half its value at the council price (112.3).
+  await borrower.locator('[data-fill-collateral="1"]').fill("10");
+  await expect(borrower.locator('[data-fill-preview="1"]')).toContainText(
+    "561.5 MOVN",
+  );
   await borrower.locator('[data-offer="1"] [data-action="fill"]').click();
   // 561.5 / (112.3 * 0.5) = 10 WBMB
   await expect(borrower.locator("#confirm-body")).toContainText(
@@ -180,7 +191,10 @@ test("past maturity and grace the loan settles: the lender gets debt plus the bo
   await open(borrower);
   await connect(borrower);
   await borrower.locator('[data-tab="borrow"]').click();
-  await borrower.locator('[data-fill-amount="2"]').fill("56.15");
+  await borrower.locator('[data-fill-collateral="2"]').fill("1");
+  await expect(borrower.locator('[data-fill-preview="2"]')).toContainText(
+    "56.15 MOVN",
+  );
   await borrower.locator('[data-offer="2"] [data-action="fill"]').click();
   // 56.15 / (112.3 * 0.5) = 1 WBMB, liquidated at 56.15 / (1 * 0.7) = 80.2143
   await expect(borrower.locator("#confirm-body")).toContainText(
@@ -337,6 +351,34 @@ test("a transaction the wallet rejects leaves no stuck state and no half-posted 
   await expect(page.locator("#offer-count")).toHaveText(before);
 });
 
+// Wallet prompt left open (a phone wallet in the background): every control is locked, so the
+// page has to say what it is waiting for where the user is looking, not only in the status line.
+test("while the wallet has not answered, the page says so at the bottom of the screen and nothing is sent", async ({
+  page,
+}) => {
+  await wallet(page, 2, { holdSends: true });
+  await open(page);
+  await connect(page);
+  const before = await page.locator("#offer-count").textContent();
+  await expect(page.locator("#toast")).toBeHidden();
+  await page.locator("#open-offer").click();
+  await page.locator('#offer-form [name="side"]').selectOption("1");
+  await page.locator('#offer-form [name="total"]').fill("7");
+  await page.locator('#offer-form [name="minFill"]').fill("7");
+  await page.locator('#offer-form button[type="submit"]').click();
+  await expect(page.locator("#confirm-dialog")).toBeVisible();
+  await page.locator("#confirm-submit").click();
+  for (const where of ["#toast", "#status"])
+    await expect(page.locator(where)).toContainText(
+      "지갑 승인을 기다리는 중입니다",
+    );
+  await page.locator("#cards").scrollIntoViewIfNeeded();
+  await expect(page.locator("#toast")).toBeInViewport();
+  await expect(page.locator("#toast")).toContainText("새로고침");
+  await expect(page.locator("#open-offer")).toBeDisabled();
+  await expect(page.locator("#offer-count")).toHaveText(before);
+});
+
 // Approvals are exact: after a lend post the market's allowance is spent to zero, never unlimited.
 test("the page approves exactly the amount it moves, never an unlimited allowance", async ({
   page,
@@ -405,10 +447,14 @@ async function post(page, total, { apr, duration } = {}) {
   await page.locator('#offer-form button[type="submit"]').click();
   await commit(page, "거래 게시 완료");
 }
+// `post` makes all-or-nothing offers, so the collateral field already holds what the whole
+// amount needs; the preview confirms the loan the borrower is about to take.
 async function fill(page, offer, amount) {
   await page.locator("#refresh").click();
   await page.locator('[data-tab="borrow"]').click();
-  await page.locator(`[data-fill-amount="${offer}"]`).fill(amount);
+  await expect(page.locator(`[data-fill-preview="${offer}"]`)).toContainText(
+    `${amount} MOVN`,
+  );
   await page.locator(`[data-offer="${offer}"] [data-action="fill"]`).click();
   await commit(page, "부분 체결 완료");
 }
@@ -499,6 +545,9 @@ test("a lender cancels an unfilled offer and takes the MOVN back; a cancelled of
   await mine(lender);
   await lender.locator('[data-offer="6"] [data-action="close"]').click();
   await commit(lender, "미체결분 회수 완료");
+  // The result is repeated at the bottom of the screen, then the controls are free again.
+  await expect(lender.locator("#toast")).toContainText("미체결분 회수 완료");
+  await expect(lender.locator("#open-offer")).toBeEnabled();
   await lender.locator('[data-action="claimMOVN"]').click();
   await commit(lender, "MOVN 수령 완료");
   await borrower.locator("#refresh").click();
@@ -626,7 +675,9 @@ test("a borrower without enough WBMB is told so in Korean and nothing is sent", 
   await poor.locator("#refresh").click();
   await settled(poor);
   await poor.locator('[data-tab="borrow"]').click();
-  await poor.locator('[data-fill-amount="10"]').fill("5");
+  await expect(poor.locator('[data-fill-preview="10"]')).toContainText(
+    "5 MOVN",
+  );
   await poor.locator('[data-offer="10"] [data-action="fill"]').click();
   await expect(poor.locator("#confirm-dialog")).toBeVisible();
   await poor.locator("#confirm-submit").click();
@@ -638,75 +689,31 @@ test("a borrower without enough WBMB is told so in Korean and nothing is sent", 
   await expect(poor.locator("#loan-count")).toHaveText(loansBefore);
 });
 
-// ---- Open on a phone wallet: no relay, no vendor. The PC shows this page as a QR; a phone
-// ---- browser without a wallet offers each wallet app's deep link into its own browser.
-const PHONE_UA =
-  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36";
-const WALLET_IDS = ["metamask", "trust", "okx", "bitget", "tokenpocket"];
-
-test("on a PC the page shows itself as a QR for a phone wallet, with each wallet's link", async ({
-  page,
-}) => {
-  await open(page);
-  await expect(page.locator("#open-on-phone")).toBeVisible();
-  await page.locator("#open-on-phone").click();
-  const dialog = page.locator("#phone-dialog");
-  await expect(dialog).toBeVisible();
-  await expect(page.locator("#phone-qr")).toHaveAttribute(
-    "src",
-    /^data:image\/png;base64,/,
-  );
-  const target = new URL("/?wallet=1", page.url()).href;
-  await expect(page.locator("#phone-url")).toHaveText(target);
-  for (const id of WALLET_IDS)
-    await expect(dialog.locator(`[data-wallet-link="${id}"]`)).toHaveCount(1);
-  await expect(dialog.locator('[data-wallet-link="trust"]')).toHaveAttribute(
-    "href",
-    "https://link.trustwallet.com/open_url?coin_id=20000714&url=" +
-      encodeURIComponent(target),
-  );
-  await page.locator("#phone-close").click();
-  await expect(dialog).toBeHidden();
-});
-
-test("a phone browser without a wallet lists the wallet apps that can open this page", async ({
+// A borrow request through the form on the replica of the real tokens: only the collateral is
+// typed, the request asks for half its value, and a lender can fund all of it.
+test("a borrow request sized by its collateral is posted and funded in full", async ({
   browser,
 }) => {
-  const context = await browser.newContext({
-    userAgent: PHONE_UA,
-    viewport: { width: 390, height: 844 },
-  });
-  const page = await context.newPage();
-  await page.goto("/?wallet=1");
-  await expect(page.locator("#status")).toContainText("연결 완료");
-  const choice = page.locator("#wallet-choice");
-  await expect(choice).toBeVisible();
-  const here = new URL("/?wallet=1", page.url()).href;
-  for (const id of WALLET_IDS)
-    await expect(choice.locator(`[data-wallet-link="${id}"]`)).toBeVisible();
-  await expect(choice.locator('[data-wallet-link="bitget"]')).toHaveAttribute(
-    "href",
-    "https://bkcode.vip?action=dapp&url=" + encodeURIComponent(here),
+  const { lender, borrower } = await pair(browser);
+  const price = Number(
+    (await borrower.locator("#current-price").textContent()).replace(/,/g, ""),
   );
-  // No horizontal scroll on a phone.
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - window.innerWidth,
+  const offers = Number(await borrower.locator("#offer-count").textContent());
+  await borrower.locator("#open-offer").click();
+  await borrower.locator('#offer-form [name="collateral"]').fill("0.5");
+  const total = await borrower
+    .locator('#offer-form [name="total"]')
+    .inputValue();
+  expect(Number(total)).toBeCloseTo(0.5 * price * 0.5, 6);
+  await borrower.locator('#offer-form button[type="submit"]').click();
+  await commit(borrower, "거래 게시 완료");
+  const id = offers + 1;
+  await lender.locator("#refresh").click();
+  await lender.locator('[data-tab="lend"]').click();
+  await lender.locator(`[data-fill-amount="${id}"]`).fill(total);
+  await lender.locator(`[data-offer="${id}"] [data-action="fill"]`).click();
+  await expect(lender.locator("#confirm-body")).toContainText(
+    "배정 담보: 0.5 WBMB",
   );
-  expect(overflow).toBeLessThanOrEqual(0);
-});
-
-test("inside a wallet's own browser the list stays hidden and the wallet connects directly", async ({
-  browser,
-}) => {
-  const context = await browser.newContext({
-    userAgent: PHONE_UA,
-    viewport: { width: 390, height: 844 },
-  });
-  const page = await context.newPage();
-  await wallet(page, 2);
-  await page.goto("/?wallet=1");
-  await expect(page.locator("#status")).toContainText("연결 완료");
-  await expect(page.locator("#wallet-choice")).toBeHidden();
-  await expect(page.locator("#open-on-phone")).toBeHidden(); // already on the phone wallet
-  await connect(page);
+  await commit(lender, "부분 체결 완료");
 });

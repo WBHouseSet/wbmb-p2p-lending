@@ -29,6 +29,13 @@ fs.writeFileSync(
   `${publicDir}/deployment.json`,
   JSON.stringify(web, null, 2) + "\n",
 );
+// LEGACY_MARKET=USDT=/usdt/ : an earlier market's page is served beside this one (MOUNTS in
+// scripts/serve.mjs), and this page links to it so offers and loans left there can be found.
+const legacy = process.env.LEGACY_MARKET
+  ? /^([A-Z0-9]{2,10})=(\/[a-z0-9-]+\/)$/.exec(process.env.LEGACY_MARKET)
+  : null;
+if (process.env.LEGACY_MARKET && !legacy)
+  throw new Error("LEGACY_MARKET 은 USDT=/usdt/ 형식이어야 합니다.");
 // Addresses and the RPC endpoint are compiled into the bundle; the page refuses a
 // deployment.json that differs. Changing the endpoint therefore means building again.
 await build({
@@ -38,6 +45,9 @@ await build({
     // QR (WalletConnect) connection is offered only when a project id is given at build time.
     __WC_PROJECT_ID__: JSON.stringify(
       process.env.WALLETCONNECT_PROJECT_ID || "",
+    ),
+    __LEGACY_MARKET__: JSON.stringify(
+      legacy ? { token: legacy[1], path: legacy[2] } : null,
     ),
   },
   build: { outDir, emptyOutDir: true },

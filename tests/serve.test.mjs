@@ -60,6 +60,10 @@ describe("static server", () => {
     fs.mkdirSync(path.join(web, "assets"), { recursive: true });
     fs.writeFileSync(path.join(web, "index.html"), "<p>page</p>");
     fs.writeFileSync(path.join(web, "assets", "a-1234.js"), "x");
+    fs.writeFileSync(
+      path.join(web, "deployment.json"),
+      JSON.stringify({ rpcUrl: "https://rpc.example/path" }),
+    );
     fs.writeFileSync(path.join(dir, "secret.txt"), "outside");
     fs.mkdirSync(path.join(acme, ".well-known", "acme-challenge"), {
       recursive: true,
@@ -113,6 +117,26 @@ describe("static server", () => {
     assert.equal(r.headers["x-frame-options"], "DENY");
     assert.equal(r.headers["x-content-type-options"], "nosniff");
     assert.equal(r.headers["cache-control"], "no-cache");
+  });
+
+  it("the page may only run its own scripts and reach the configured RPC and WalletConnect", async () => {
+    const r = await get(`http://127.0.0.1:${port("http")[0]}/`);
+    const policy = Object.fromEntries(
+      r.headers["content-security-policy"].split("; ").map((d) => {
+        const [name, ...values] = d.split(" ");
+        return [name, values];
+      }),
+    );
+    assert.deepEqual(policy["script-src"], ["'self'"]);
+    assert.deepEqual(policy["frame-ancestors"], ["'none'"]);
+    assert.deepEqual(policy["connect-src"], [
+      "'self'",
+      "https://rpc.example",
+      "https://*.walletconnect.org",
+      "wss://*.walletconnect.org",
+      "https://*.walletconnect.com",
+      "wss://*.walletconnect.com",
+    ]);
   });
 
   it("nothing outside the web folder is served, even with ..", async () => {
@@ -194,6 +218,89 @@ describe("static server", () => {
     } finally {
       await s.close();
     }
+  });
+
+  describe("an earlier market's page mounted under a path", () => {
+    let old, s, base;
+    before(async () => {
+      old = path.join(dir, "old");
+      fs.mkdirSync(path.join(old, "assets"), { recursive: true });
+      fs.writeFileSync(path.join(old, "index.html"), "<p>old page</p>");
+      fs.writeFileSync(path.join(old, "assets", "b-5678.js"), "y");
+      fs.writeFileSync(
+        path.join(old, "deployment.json"),
+        JSON.stringify({ rpcUrl: "https://old-rpc.example" }),
+      );
+      s = await startServer({
+        webDir: web,
+        listen: "127.0.0.1:0",
+        mounts: `/usdt=${old}`,
+        log: () => {},
+      });
+      base = `http://127.0.0.1:${s.ports.http[0]}`;
+    });
+    after(() => s?.close());
+
+    it("serves that page and its files under the path, with its own policy", async () => {
+      const r = await get(`${base}/usdt/`);
+      assert.equal(r.status, 200);
+      assert.equal(r.body, "<p>old page</p>");
+      assert.equal(r.headers["cache-control"], "no-cache");
+      assert.match(
+        r.headers["content-security-policy"],
+        /connect-src 'self' https:\/\/old-rpc\.example /,
+      );
+      const a = await get(`${base}/usdt/assets/b-5678.js`);
+      assert.equal(a.body, "y");
+      assert.match(a.headers["cache-control"], /immutable/);
+      const d = await get(`${base}/usdt/deployment.json`);
+      assert.equal(JSON.parse(d.body).rpcUrl, "https://old-rpc.example");
+    });
+
+    it("the path without a trailing slash goes to the one with it", async () => {
+      const r = await get(`${base}/usdt`);
+      assert.equal(r.status, 301);
+      assert.equal(r.headers.location, "/usdt/");
+    });
+
+    it("the current page is unchanged and the two do not leak into each other", async () => {
+      const r = await get(`${base}/`);
+      assert.equal(r.body, "<p>page</p>");
+      assert.match(
+        r.headers["content-security-policy"],
+        /connect-src 'self' https:\/\/rpc\.example /,
+      );
+      assert.equal((await get(`${base}/usdt/assets/a-1234.js`)).status, 404);
+      assert.equal((await get(`${base}/assets/b-5678.js`)).status, 404);
+      assert.equal((await get(`${base}/usdtx/`)).status, 404);
+      for (const p of [
+        "/usdt/../../secret.txt",
+        "/usdt/%2e%2e/%2e%2e/secret.txt",
+      ]) {
+        const x = await raw(s.ports.http[0], p);
+        assert.equal(x.status, 404, p);
+        assert.equal(x.body.includes("outside"), false, p);
+      }
+    });
+
+    it("a mount without a built page, or with an odd path, is refused at start", async () => {
+      for (const mounts of [
+        `/usdt=${path.join(dir, "nothing")}`,
+        `/a/b=${old}`,
+        `usdt=${old}`,
+        "/usdt",
+      ])
+        await assert.rejects(
+          startServer({
+            webDir: web,
+            listen: "127.0.0.1:0",
+            mounts,
+            log: () => {},
+          }),
+          /MOUNTS|index\.html/,
+          mounts,
+        );
+    });
   });
 
   it("a redirect listener without a configured public host is refused at start", async () => {

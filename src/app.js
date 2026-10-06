@@ -14,7 +14,6 @@ import {
   submitReport,
 } from "./report-signing.mjs";
 import { COUNCIL_POLICY_ID, submitCouncilReport } from "./council-signing.mjs";
-import { phoneUrl, walletLinks, wantsWalletChoice } from "./open-in-wallet.mjs";
 
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) =>
@@ -100,6 +99,9 @@ const PINNED = typeof __PINNED__ === "undefined" ? null : __PINNED__;
 // WalletConnect project id, compiled into a live build that offers QR connection ("" otherwise).
 const WC_PROJECT_ID =
   typeof __WC_PROJECT_ID__ === "undefined" ? "" : __WC_PROJECT_ID__;
+// An earlier market whose page is served beside this one ({ token, path }), or null.
+const LEGACY_MARKET =
+  typeof __LEGACY_MARKET__ === "undefined" ? null : __LEGACY_MARKET__;
 let feePct = "5";
 // Exact amount with no rounding, for what the user is about to sign.
 const full = (n, d = 18) => formatUnits(n, d).replace(/\.0$/, "");
@@ -147,6 +149,62 @@ const minCollateral = (amount, terms) => {
   // The divisions above round down; the contract's rounding costs a unit or two more.
   for (let i = 0; i < 8 && !collateralCovers(amount, c, terms); i++) c += 1n;
   return c;
+};
+// A borrower types what they pledge, never the loan: the page works the loan out of the
+// collateral and the council price. Loans are whole millionths of a MOVN, which also clears
+// the contract's per-fill rounding when a request is filled in parts.
+const LOAN_STEP = 10n ** 12n;
+// The most MOVN that `collateral` (WBMB base units) carries at today's price under `terms`, by
+// the contract's own fill test (collateralCovers). 0 when there is no price or too little WBMB.
+const maxLoan = (collateral, terms) => {
+  if (!priceLive || openingPrice <= 0n || currentPrice <= 0n) return 0n;
+  const value = (price) => (collateral * price) / 100000000n;
+  const byLimit =
+    (value(openingPrice) * (10000n - BigInt(terms.haircutBps))) / 10000n;
+  const year = 10000n * 31536000n;
+  const line = (value(currentPrice) * BigInt(terms.liquidationBps)) / 10000n;
+  const byLine =
+    (line * year) / (year + BigInt(terms.aprBps) * BigInt(terms.duration));
+  let loan = byLimit < byLine ? byLimit : byLine;
+  loan -= loan % LOAN_STEP;
+  for (
+    let i = 0;
+    i < 4 && loan > 0n && !collateralCovers(loan, collateral, terms);
+    i++
+  )
+    loan -= LOAN_STEP;
+  return loan > 0n && collateralCovers(loan, collateral, terms) ? loan : 0n;
+};
+// The council market's lend offers are taken by collateral (everything else types MOVN).
+const byCollateral = (o) => council() && Number(o.side) === 1;
+// What pledging `collateral` gets a borrower from lend offer `o`: the loan, capped by what is
+// left, and the least collateral that reaches the offer's smallest fill.
+const loanFor = (o, collateral) => {
+  const minimum = o.remaining < o.minFill ? o.remaining : o.minFill;
+  const least = minCollateral(minimum, o.terms);
+  let loan = maxLoan(collateral, o.terms);
+  if (loan >= o.remaining) loan = o.remaining;
+  // A smallest fill that is not a whole millionth is still reachable with its own collateral.
+  else if (loan < minimum && collateral >= least) loan = minimum;
+  return { loan, minimum, least, enough: loan >= minimum && loan > 0n };
+};
+// The line under a collateral field on a lend offer: what the typed WBMB borrows, or why not.
+const fillPreview = (o, text) => {
+  if (!priceSet) return "첫 카운슬 가격이 등록되면 빌릴 금액이 계산됩니다.";
+  if (!priceLive)
+    return "카운슬 가격이 만료되어 빌릴 금액을 계산할 수 없습니다.";
+  let collateral;
+  try {
+    collateral = amount(text, 8);
+  } catch {
+    return "맡길 WBMB를 숫자로 입력하면 빌릴 금액이 계산됩니다.";
+  }
+  const { loan, minimum, least, enough } = loanFor(o, collateral);
+  if (!enough)
+    return `담보가 적습니다 · 최소 참여 ${full(minimum)} MOVN에는 ${full(least, 8)} WBMB 이상이 필요합니다.`;
+  return loan === o.remaining && maxLoan(collateral, o.terms) > loan
+    ? `남은 금액 전부인 ${full(loan)} MOVN을 빌립니다 (담보는 필요한 만큼만 쓰입니다).`
+    : `${full(collateral, 8)} WBMB를 맡기면 ${full(loan)} MOVN을 빌립니다 (담보 가치의 ${councilLtv()}%).`;
 };
 // A price shown to two decimals, rounded up: a liquidation price must never read lower than it is.
 const priceUp = (n) =>
@@ -209,6 +267,42 @@ const councilTermsHtml = () => {
 // The one disclosure of the stale-price escape; every council text that promises the borrower the rest uses it.
 const staleNote = () =>
   `가격 갱신이 끊긴 채로 유예 종료와 가격 만료 뒤 각각 ${staleDelay}이 지나면 마지막 가격으로 정산됩니다.`;
+// The other two markets' terms, in a sentence.
+const plainTerms = () =>
+  fixed()
+    ? `만기 유예 1일. 단리 APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 ${feePct}%가 별도 수수료입니다. 가격이 내려가도 청산되지 않고, 만기·유예 후 미상환이면 추가 담보를 포함한 남은 WBMB 전부가 대출자에게 넘어갑니다.`
+    : "체험 조건: 헤어컷 10% · 청산 기준 95% · 만기 유예 1일. 단리 APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 5%가 별도 소각 수수료입니다.";
+// States the market's terms in full in `el`: in the guide under the list and in the offer form.
+const showTerms = (el) => {
+  if (council()) el.innerHTML = councilTermsHtml();
+  else el.textContent = plainTerms();
+};
+// The few terms a visitor needs to read an offer, as one line above the list. The full
+// statement is in the guide below, and the line leads there.
+const termsBriefHtml = () => {
+  const points = council()
+    ? [
+        `담보 가치의 ${councilLtv()}%까지`,
+        `청산선 ${councilLine()}%`,
+        `유예 ${councilGrace()}`,
+        `수수료 이자의 ${feePct}%`,
+      ]
+    : fixed()
+      ? [
+          "가격 청산 없음",
+          "미상환이면 담보 전부 대출자에게",
+          "유예 1일",
+          `수수료 이자의 ${feePct}%`,
+        ]
+      : ["헤어컷 10%", "청산 기준 95%", "유예 1일", "소각 수수료 이자의 5%"];
+  return `${points.map((p) => `<span>${p}</span>`).join("")}<a href="#guide-terms">조건 자세히</a>`;
+};
+// What the post button posts from the open tab: a request to borrow from the borrowing tab,
+// an offer to lend from the lending tab.
+const postSide = () => ({ borrow: "0", lend: "1" })[tab];
+const postLabel = () =>
+  ({ 0: "빌리기 요청 올리기", 1: "빌려주기 제안 올리기" })[postSide()] ??
+  "제안 올리기";
 const spenderLine = () =>
   `승인 대상 컨트랙트: ${contracts.lending.target} (토큰 사용 승인은 이 주소에만 합니다)`;
 const feeWord = () => (vault() ? "수수료" : "소각 수수료");
@@ -282,10 +376,21 @@ const readyText = () =>
   config.demo
     ? "로컬 체인 준비 완료 · 체험 지갑을 선택하면 바로 거래할 수 있습니다."
     : "BNB Smart Chain 연결 완료 · 지갑을 연결하면 거래할 수 있습니다.";
+let toastTimer;
 function status(message, type = "") {
   $("#status").textContent = message;
   $("#status").className = type;
+  // The status line sits near the top of a long page. While a transaction locks the controls,
+  // its progress and result are repeated at the bottom of the screen, wherever the user is.
+  if (!busy) return;
+  $("#toast").textContent = message;
+  $("#toast").className = `toast ${type}`;
+  $("#toast").hidden = false;
 }
+// Until a wallet answers, nothing has been sent; a prompt that never shows (a phone wallet in
+// the background, a lost QR session) would otherwise look like a frozen page.
+const WALLET_WAIT =
+  "지갑 승인을 기다리는 중입니다. 지갑 앱을 열어 요청을 승인하거나 거절하세요. 요청이 보이지 않으면 이 화면을 새로고침한 뒤 다시 시도하세요. 승인하기 전에는 아무것도 전송되지 않습니다.";
 function errorMessage(e) {
   const raw = String(e.shortMessage || e.message || e);
   const messages = {
@@ -332,6 +437,8 @@ function amount(text, decimals = 18) {
 }
 function lock(yes) {
   busy = yes;
+  clearTimeout(toastTimer);
+  if (!yes) toastTimer = setTimeout(() => ($("#toast").hidden = true), 8000);
   document.querySelectorAll("button,input,select").forEach((el) => {
     if (el.closest("#confirm-dialog")) return;
     if (yes) {
@@ -632,7 +739,8 @@ async function txAction(title, message, action) {
       return;
     }
     await assertSession();
-    const send = async (promise) => {
+    const send = async (promise, what = "") => {
+      status(what ? `${what} · ${WALLET_WAIT}` : WALLET_WAIT);
       const transaction = await promise;
       status(`확정 대기 중 · ${short(transaction.hash)}`);
       const receipt = await transaction.wait();
@@ -657,11 +765,12 @@ async function txAction(title, message, action) {
           contracts.lending.target,
         );
       if (current < value) {
-        status("토큰 사용 승인 중 · 다음에 본 거래를 확인합니다.");
+        // Two prompts follow: this approval, then the transaction itself.
+        const what = "토큰 사용 승인(다음에 본 거래를 확인합니다)";
         if (current > 0n)
-          await send(contract.approve(contracts.lending.target, 0));
+          await send(contract.approve(contracts.lending.target, 0), what);
         await assertSession();
-        await send(contract.approve(contracts.lending.target, value));
+        await send(contract.approve(contracts.lending.target, value), what);
       }
       await assertSession();
     };
@@ -800,6 +909,66 @@ async function refresh() {
     $("#cards").setAttribute("aria-busy", "false");
   }
 }
+// The amount row of an open offer. Taking a council lend offer, the borrower types the WBMB to
+// pledge (it starts at what the smallest fill needs) and the loan is shown under it.
+function fillRow(o, minimum) {
+  const button = `<button class="button primary" data-action="fill" data-id="${o.id}">${o.side === 0 ? "빌려주기" : "빌리기"}</button>`;
+  if (!byCollateral(o))
+    return `<span class="fill-label">${o.side === 0 ? "빌려줄 금액" : "빌릴 금액"} (MOVN)</span><div class="input-row"><input data-fill-amount="${o.id}" aria-label="거래 ${o.id} 참여 금액" value="${formatUnits(minimum, 18)}" inputmode="decimal" />${button}</div>`;
+  const start = priceLive ? full(minCollateral(minimum, o.terms), 8) : "";
+  return `<span class="fill-label">맡길 담보 (WBMB)</span><div class="input-row"><input data-fill-collateral="${o.id}" aria-label="거래 ${o.id} 맡길 담보 (WBMB)" value="${start}" inputmode="decimal" />${button}</div><small class="field-hint" data-fill-preview="${o.id}">${esc(fillPreview(o, start))}</small>`;
+}
+// A card's facts, each a label over its value.
+const factList = (facts) =>
+  `<dl>${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("")}</dl>`;
+// A borrow request fixes its MOVN-per-WBMB ratio when it is posted, so it keeps the council
+// price of that day: the price at which its collateral would carry exactly its amount. Rounded
+// to the council's two decimals, so requests posted at one price compare equal.
+const postedPrice = (o) => {
+  const exact =
+    (o.total * 100000000n * 10000n) /
+    (o.collateralTotal * (10000n - BigInt(o.terms.haircutBps)));
+  const cent = 10n ** 16n;
+  return ((exact + cent / 2n) / cent) * cent;
+};
+// How a council borrow request stands against today's price: posted at it, below it (more
+// collateral behind each MOVN: cheap for a lender) or above it (dear, and not fillable).
+const priceMark = (o) => {
+  if (!council() || o.side !== 0 || !priceLive || o.collateralTotal === 0n)
+    return null;
+  const posted = postedPrice(o);
+  const now = ((openingPrice + 5n * 10n ** 15n) / 10n ** 16n) * 10n ** 16n;
+  const gap = `${Math.abs((Number(posted - now) / Number(now)) * 100).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}%`;
+  if (posted === now) return { kind: "now", badge: "현재 시세", posted };
+  return posted < now
+    ? {
+        kind: "cheap",
+        badge: "이전 시세 · 지금보다 쌈",
+        posted,
+        note: `올릴 때 시세 ${fmt(posted)} MOVN 기준입니다. 지금 시세 ${fmt(now)} MOVN보다 ${gap} 낮아, 같은 금액에 담보가 더 많이 잡혀 있습니다.`,
+      }
+    : {
+        kind: "dear",
+        badge: "이전 시세 · 지금보다 비쌈",
+        posted,
+        note: `올릴 때 시세 ${fmt(posted)} MOVN 기준입니다. 지금 시세 ${fmt(now)} MOVN보다 ${gap} 높아, 지금은 담보가 모자랍니다.`,
+      };
+};
+// Market tabs list the reader's best terms first, so a newcomer need not compare rates to see
+// what is dear. Borrowing: the lowest rate. Lending: the request posted at the lowest price
+// (the most collateral behind each MOVN), then the highest rate. The older post first among
+// equals, and a request nobody can fill at today's price below the ones that can.
+const unfillable = (o) =>
+  council() &&
+  o.side === 0 &&
+  priceLive &&
+  !collateralCovers(o.total, o.collateralTotal, o.terms);
+const bestTermsFirst = (tab) => (a, b) =>
+  Number(unfillable(a)) - Number(unfillable(b)) ||
+  (tab === "lend" && council() ? Number(postedPrice(a) - postedPrice(b)) : 0) ||
+  (tab === "borrow" ? 1 : -1) *
+    (Number(a.terms.aprBps) - Number(b.terms.aprBps)) ||
+  a.id - b.id;
 function offerCard(o) {
   const own = address?.toLowerCase() === o.maker.toLowerCase();
   const active = !o.closed && Number(o.expiresAt) > latest;
@@ -814,10 +983,40 @@ function offerCard(o) {
     active &&
     priceLive &&
     !collateralCovers(o.total, o.collateralTotal, o.terms);
+  const mark = odd || !active ? null : priceMark(o);
+  const markBadge = mark
+    ? `<span class="badge price-${mark.kind}" data-price-mark="${mark.kind}">${mark.badge}</span>`
+    : "";
+  const markNote = mark?.note ? `<p class="note">${mark.note}</p>` : "";
   const shortNote = short_
     ? `<p class="note warning">담보 부족 · 지금 카운슬 가격에서는 체결할 수 없습니다. ${fmt(o.total)} MOVN 요청에는 담보가 최소 ${full(minCollateral(o.total, o.terms), 8)} WBMB 필요한데 ${full(o.collateralTotal, 8)} WBMB만 맡겨져 있습니다.${own ? " 미체결분을 회수한 뒤 담보를 늘려 다시 올리세요." : ""}</p>`
     : "";
-  return `<article class="card" data-offer="${o.id}"><div class="card-top"><span class="badge ${o.side === 0 ? "neutral" : ""}">${o.side === 0 ? "빌리고 싶어요" : "빌려드려요"}${odd ? " · 비표준 조건" : ""}</span><span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><h3>${fmt(o.remaining)} <small>MOVN</small></h3><span class="sub">${active ? "남은 참여 가능 금액" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span><dl><div><dt>고정 연이율</dt><dd>${percent(o.terms.aprBps)}% APR</dd></div><div><dt>대출 기간</dt><dd>${durationText(o.terms.duration)}</dd></div><div><dt>최소 참여</dt><dd>${fmt(minimum)} MOVN</dd></div>${fixed() ? `<div><dt>담보 비율</dt><dd>${ratioText(o)}</dd></div>` : council() && !odd ? (o.side === 0 ? `<div><dt>맡긴 담보</dt><dd>${fmt(o.collateralRemaining, 8, 8)} WBMB</dd></div>` : "") : `<div><dt>${council() ? "담보 여유" : "헤어컷"}</dt><dd>${percent(o.terms.haircutBps)}%</dd></div>${council() ? `<div><dt>청산선</dt><dd>${percent(o.terms.liquidationBps)}%</dd></div>` : ""}`}</dl><div class="mode">${council() && !odd ? "" : `${modeText(o.terms.mode)}<br>만기 후 유예 ${durationText(o.terms.grace)} · `}게시 만료 ${date(o.expiresAt)}${odd ? `<br>이 화면의 표준 조건(담보 여유 ${percent(COUNCIL_TERMS.haircutBps)}% · 청산선 ${councilLine()}% · 유예 ${councilGrace()})과 달라 시장 목록에 나오지 않고 이 화면에서 체결되지 않습니다.` : ""}</div>${shortNote}${active && !own && !short_ ? `<div class="input-row"><input data-fill-amount="${o.id}" aria-label="거래 ${o.id} 참여 금액" value="${formatUnits(minimum, 18)}" inputmode="decimal" /><button class="button primary" data-action="fill" data-id="${o.id}">${o.side === 0 ? "빌려주기" : "빌리기"}</button></div>` : ""}${own && !o.closed ? `<div class="row-actions"><button class="button outline small" data-action="close" data-id="${o.id}">미체결분 회수</button></div>` : ""}</article>`;
+  // The terms every standard council offer shares are stated once in the guide, not on each card.
+  const standard = council() && !odd;
+  const facts = [
+    ["대출 기간", durationText(o.terms.duration)],
+    ["최소 참여", `${fmt(minimum)} MOVN`],
+    ...(fixed()
+      ? [["담보 비율", ratioText(o)]]
+      : standard
+        ? o.side === 0
+          ? [["맡긴 담보", `${fmt(o.collateralRemaining, 8, 8)} WBMB`]]
+          : []
+        : [
+            [
+              council() ? "담보 여유" : "헤어컷",
+              `${percent(o.terms.haircutBps)}%`,
+            ],
+            ...(council()
+              ? [["청산선", `${percent(o.terms.liquidationBps)}%`]]
+              : []),
+          ]),
+    ["게시 만료", date(o.expiresAt)],
+  ];
+  const mode = standard
+    ? ""
+    : `<div class="mode">${modeText(o.terms.mode)} · 만기 후 유예 ${durationText(o.terms.grace)}${odd ? `<br>이 화면의 표준 조건(담보 여유 ${percent(COUNCIL_TERMS.haircutBps)}% · 청산선 ${councilLine()}% · 유예 ${councilGrace()})과 달라 시장 목록에 나오지 않고 이 화면에서 체결되지 않습니다.` : ""}</div>`;
+  return `<article class="card" data-offer="${o.id}"><div class="card-top"><span class="badge ${o.side === 0 ? "neutral" : ""}">${o.side === 0 ? "빌리고 싶어요" : "빌려드려요"}${odd ? " · 비표준 조건" : ""}</span>${markBadge}<span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><div class="card-figures"><div class="figure"><strong>${percent(o.terms.aprBps)}<small>%</small></strong><span class="sub">고정 연이율 (APR)</span></div><div class="figure end"><h3>${fmt(o.remaining)} <small>MOVN</small></h3><span class="sub">${active ? "남은 참여 가능 금액" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span></div></div>${factList(facts)}${mode}${markNote}${shortNote}${active && !own && !short_ ? fillRow(o, minimum) : ""}${own && !o.closed ? `<div class="row-actions"><button class="button outline small" data-action="close" data-id="${o.id}">미체결분 회수</button></div>` : ""}</article>`;
 }
 function loanCard(l) {
   const isBorrower = address?.toLowerCase() === l.borrower.toLowerCase();
@@ -825,7 +1024,25 @@ function loanCard(l) {
     l.status
   ];
   const due = l.maturity + BigInt(l.terms.grace);
-  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><h3>${fmt(l.debt, 18, 6)} <small>MOVN</small></h3><span class="sub">${l.status === 1 ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span><dl><div><dt>배정 담보</dt><dd>${fmt(l.collateral, 8, 8)} WBMB</dd></div><div><dt>고정 연이율</dt><dd>${percent(l.terms.aprBps)}% APR</dd></div></dl>${council() && l.status === 1 && Number(l.terms.mode) === 0 && l.collateral > 0n ? liquidationBlock(l) : ""}<div class="mode">${council() && Number(l.terms.mode) === 0 ? `갚는 기한 ${date(due)} (만기 ${date(l.maturity)})` : `${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}`}</div>${l.status === 1 && isBorrower ? `${fixed() ? "" : `<div class="input-row"><input data-topup-amount="${l.id}" aria-label="대출 ${l.id} 추가 담보" value="0.1" inputmode="decimal" /><button class="button outline small" data-action="topup" data-id="${l.id}">담보 추가</button></div>`}<div class="input-row"><input data-repay-amount="${l.id}" aria-label="대출 ${l.id} 상환 원금" value="${formatUnits(l.principal, 18)}" inputmode="decimal" /><button class="button primary small" data-action="repay" data-id="${l.id}">상환</button></div><div class="row-actions"><button class="text-button" data-action="interest" data-id="${l.id}">이자만 납부</button></div>` : ""}${l.status === 1 ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${l.status === 3 ? "MOVN으로 상환된 것이 아닙니다. 수령 가능한 WBMB는 위 잔액에서 확인하세요." : fixed() || (council() && Number(l.terms.mode) !== 0) ? `유예 종료(${date(due)})까지 전액 상환하지 않으면 남은 담보 전부가 대출자에게 넘어갑니다. 일부 상환으로는 담보가 풀리지 않습니다.` : council() ? `카운슬 가격이 청산 가격 이하로 내려가거나 ${date(due)}까지 갚지 않으면 정산됩니다. 대출자는 빚 + ${bonusPct}%어치의 WBMB를 받고 나머지는 차입자에게 돌아갑니다. 담보를 추가하면 청산 가격이 내려갑니다.` : "담보 추가는 만기 연장이 아닙니다. 체결된 원금은 대출자가 임의 회수할 수 없습니다."}</p></article>`;
+  const open = l.status === 1;
+  const priced = council() && Number(l.terms.mode) === 0;
+  // What the borrower can do, the most likely first: repay, then add collateral.
+  const borrowerActions =
+    open && isBorrower
+      ? `<span class="fill-label">갚을 원금 (MOVN)</span><div class="input-row"><input data-repay-amount="${l.id}" aria-label="대출 ${l.id} 상환 원금" value="${formatUnits(l.principal, 18)}" inputmode="decimal" /><button class="button primary" data-action="repay" data-id="${l.id}">상환</button></div><div class="row-actions"><button class="text-button" data-action="interest" data-id="${l.id}">이자만 납부</button></div>${fixed() ? "" : `<span class="fill-label">추가할 담보 (WBMB)</span><div class="input-row"><input data-topup-amount="${l.id}" aria-label="대출 ${l.id} 추가 담보" value="0.1" inputmode="decimal" /><button class="button outline" data-action="topup" data-id="${l.id}">담보 추가</button></div>`}`
+      : "";
+  const detail =
+    l.status === 3
+      ? "MOVN으로 상환된 것이 아닙니다. 수령 가능한 WBMB는 위 잔액에서 확인하세요."
+      : fixed() || (council() && !priced)
+        ? `유예 종료(${date(due)})까지 전액 상환하지 않으면 남은 담보 전부가 대출자에게 넘어갑니다. 일부 상환으로는 담보가 풀리지 않습니다.`
+        : council()
+          ? `카운슬 가격이 청산 가격 이하로 내려가거나 ${date(due)}까지 갚지 않으면 정산됩니다. 대출자는 빚 + ${bonusPct}%어치의 WBMB를 받고 나머지는 차입자에게 돌아갑니다. 담보를 추가하면 청산 가격이 내려갑니다.`
+          : "담보 추가는 만기 연장이 아닙니다. 체결된 원금은 대출자가 임의 회수할 수 없습니다.";
+  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><div class="card-figures"><div class="figure"><h3>${fmt(l.debt, 18, 6)} <small>MOVN</small></h3><span class="sub">${open ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span></div></div>${factList([
+    ["배정 담보", `${fmt(l.collateral, 8, 8)} WBMB`],
+    ["고정 연이율", `${percent(l.terms.aprBps)}% APR`],
+  ])}${priced && open && l.collateral > 0n ? liquidationBlock(l) : ""}<div class="mode">${priced ? `갚는 기한 ${date(due)} (만기 ${date(l.maturity)})` : `${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}`}</div>${borrowerActions}${open ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${detail}</p></article>`;
 }
 async function render() {
   if (!contracts) return;
@@ -857,7 +1074,7 @@ async function render() {
         (!council() || standardCouncilOffer(o)),
     );
     html =
-      filtered.map(offerCard).join("") ||
+      filtered.sort(bestTermsFirst(tab)).map(offerCard).join("") ||
       '<div class="empty">아직 열린 거래가 없습니다.<small>원하는 조건으로 첫 제안을 올려보세요.</small></div>';
   } else if (tab === "mine") {
     if (!address)
@@ -913,10 +1130,27 @@ async function render() {
     const kept = typed.find(([k]) => k === key);
     if (kept) el.value = kept[1];
   }
+  for (const el of $("#cards").querySelectorAll("[data-fill-collateral]"))
+    syncFillPreview(el);
   dropTyped = false;
   if (busy) lock(true);
 }
 
+// Keeps the line under a lend offer's collateral field in step with what is typed.
+function syncFillPreview(field) {
+  const id = Number(field.dataset.fillCollateral);
+  const o = offers.find((x) => x.id === id);
+  const line = $(`[data-fill-preview="${id}"]`);
+  if (!o || !line) return;
+  line.textContent = fillPreview(o, field.value);
+  line.classList.toggle(
+    "warning",
+    line.textContent.startsWith("담보가 적습니다"),
+  );
+}
+$("#cards").addEventListener("input", (e) => {
+  if (e.target.dataset?.fillCollateral) syncFillPreview(e.target);
+});
 async function handleAction(action, id) {
   if (!signer) {
     status("먼저 지갑을 연결하거나 체험 지갑을 선택하세요.", "error");
@@ -930,13 +1164,28 @@ async function handleAction(action, id) {
       );
     if (council() && !priceLive)
       throw new Error("카운슬 가격이 만료되어 지금은 체결할 수 없습니다.");
-    const input = amount($(`[data-fill-amount="${id}"]`).value),
-      o = await contracts.lending.getOffer(id);
+    const o = await contracts.lending.getOffer(id);
     if (council() && !standardCouncilOffer(o))
       throw new Error(
         "이 게시글은 화면의 표준 조건과 달라 여기서 체결할 수 없습니다.",
       );
+    // A borrower's typed collateral decides the loan and caps what the contract may take.
+    let input,
+      pledged = null;
+    if (byCollateral(o)) {
+      pledged = amount($(`[data-fill-collateral="${id}"]`).value, 8);
+      const { loan, minimum, least, enough } = loanFor(o, pledged);
+      if (!enough)
+        throw new Error(
+          `담보가 적습니다. 최소 참여 ${full(minimum)} MOVN에는 ${full(least, 8)} WBMB 이상이 필요합니다.`,
+        );
+      input = loan;
+    } else input = amount($(`[data-fill-amount="${id}"]`).value);
     const collateral = await contracts.lending.quoteFill(id, input);
+    if (pledged !== null && collateral > pledged)
+      throw new Error(
+        `카운슬 가격이 바뀌어 ${full(input)} MOVN에는 ${full(collateral, 8)} WBMB가 필요합니다. 새로고침한 뒤 다시 확인하세요.`,
+      );
     const interest =
       (input * BigInt(o.terms.aprBps) * BigInt(o.terms.duration)) /
       (10000n * 31536000n);
@@ -1121,6 +1370,7 @@ $("#open-offer").onclick = () => {
     status("먼저 체험 지갑을 선택하거나 지갑을 연결하세요.", "error");
     return;
   }
+  ownMinFill = false;
   syncCollateralHint();
   $("#offer-dialog").showModal();
 };
@@ -1143,34 +1393,57 @@ function syncOfferForm() {
       : "체험 조건: 헤어컷 10% · 청산 기준 95% · 만기 유예 1일. 단리 APR이며 실제 경과기간만 이자를 냅니다. 지급 이자의 5%가 별도 소각 수수료입니다.";
   if (council()) $("#terms-note").innerHTML = councilTermsHtml();
 }
-// Under the collateral field of a council borrow request: what today's price demands for the typed amount.
-function syncCollateralHint() {
-  const hint = $("#collateral-hint");
-  hint.hidden = true;
-  if (!council() || form.elements.side.value !== "0" || !priceLive) return;
+// A council borrow request is sized by its collateral: the poster types the WBMB and the form
+// works out the loan (never typed) and, until the poster sets their own, the smallest fill.
+const sizedByCollateral = () => council() && form.elements.side.value === "0";
+let ownMinFill = false;
+// The loan the typed collateral carries at today's price, or null while it cannot be worked out.
+function requestLoan() {
   try {
-    const total = amount(form.elements.total.value);
     const days = Number(form.elements.duration.value);
-    if (total <= 0n || !Number.isInteger(days) || days < 1) return;
-    const min = minCollateral(total, {
+    if (!Number.isInteger(days) || days < 1) return null;
+    const loan = maxLoan(amount(form.elements.collateral.value, 8), {
       ...COUNCIL_TERMS,
       aprBps: amount(form.elements.apr.value, 2),
       duration: days * 86400,
     });
-    let pledged = 0n;
-    try {
-      pledged = amount(form.elements.collateral.value, 8);
-    } catch {}
-    const enough = pledged >= min;
-    hint.textContent = `${enough ? "" : "담보 부족 · "}지금 카운슬 가격(${fmt(currentPrice)} MOVN)에서 ${fmt(total)} MOVN을 빌리려면 최소 ${full(min, 8)} WBMB`;
-    hint.classList.toggle("warning", !enough);
-    hint.hidden = false;
+    return loan > 0n ? loan : null;
   } catch {
-    // an amount still being typed: no hint until it parses
+    return null; // an amount still being typed
   }
 }
-form.addEventListener("input", syncCollateralHint);
+function syncCollateralHint() {
+  const hint = $("#collateral-hint");
+  const sized = sizedByCollateral();
+  form.elements.total.readOnly = sized;
+  $("#total-label").textContent = sized
+    ? "빌릴 금액 (MOVN) · 자동 계산"
+    : "총 대출 한도 (MOVN)";
+  hint.hidden = !sized;
+  if (!sized) return;
+  const loan = requestLoan();
+  form.elements.total.value = loan === null ? "" : full(loan);
+  if (!ownMinFill)
+    form.elements.minFill.value =
+      loan === null
+        ? ""
+        : full(loan / 10n - ((loan / 10n) % LOAN_STEP) || loan);
+  hint.textContent = !priceLive
+    ? "카운슬 가격이 없어 빌릴 금액을 계산할 수 없습니다."
+    : `지금 카운슬 가격(${fmt(currentPrice)} MOVN)에서 담보 가치의 ${councilLtv()}%까지 빌릴 수 있습니다. 올린 뒤 가격이 내려가면 이 글은 체결되지 않으니, 회수한 뒤 다시 올리세요.`;
+  hint.classList.toggle("warning", !priceLive);
+}
+form.addEventListener("input", (e) => {
+  if (e.target === form.elements.minFill) ownMinFill = true;
+  syncCollateralHint();
+});
 form.elements.side.onchange = () => {
+  // Leaving the collateral-sized request: the worked-out amounts are not the lender's.
+  if (council() && !sizedByCollateral()) {
+    form.elements.total.value = form.elements.total.defaultValue;
+    if (!ownMinFill)
+      form.elements.minFill.value = form.elements.minFill.defaultValue;
+  }
   syncOfferForm();
   syncCollateralHint();
 };
@@ -1180,8 +1453,21 @@ form.elements.mode.onchange = () => {
 form.onsubmit = async (e) => {
   e.preventDefault();
   try {
-    const side = Number(form.elements.side.value),
-      total = amount(form.elements.total.value);
+    const side = Number(form.elements.side.value);
+    if (sizedByCollateral()) {
+      if (!priceLive)
+        throw new Error(
+          "카운슬 가격이 없어 빌릴 금액을 계산할 수 없습니다. 가격이 올라온 뒤 다시 시도하세요.",
+        );
+      // Worked out again from the collateral here, whatever the read-only field shows.
+      const loan = requestLoan();
+      if (loan === null)
+        throw new Error(
+          "맡길 담보(WBMB)를 입력하세요. 빌릴 금액은 담보에서 자동으로 계산됩니다.",
+        );
+      form.elements.total.value = full(loan);
+    }
+    const total = amount(form.elements.total.value);
     const needsCollateral = side === 0 || fixed();
     const collateral = needsCollateral
         ? amount(form.elements.collateral.value, 8)
@@ -1390,6 +1676,18 @@ function renderVerify() {
   $("#movn-risk-council").hidden = !council();
 }
 
+// Offers and loans on the earlier market are not in this page's lists: point to its page.
+function showLegacyMarket() {
+  if (!LEGACY_MARKET) return;
+  const { token, path } = LEGACY_MARKET;
+  $("#legacy-market-text").textContent =
+    `${token}로 올린 예전 제안과 대출은 이 목록에 나오지 않습니다.`;
+  const link = $("#legacy-market-link");
+  link.textContent = `이전 ${token} 시장 열기 →`;
+  link.href = path;
+  $("#legacy-market").hidden = false;
+}
+
 async function init() {
   const responses = await Promise.all([
     fetch("/deployment.json", { cache: "no-store" }),
@@ -1400,6 +1698,7 @@ async function init() {
       "배포 설정을 찾을 수 없습니다. 로컬 체험은 프로젝트 폴더에서 npm run dev를 실행하세요.",
     );
   [config, abis] = await Promise.all(responses.map((r) => r.json()));
+  showLegacyMarket();
   const demoOk =
     config.demo === true &&
     config.chainId === 31337 &&
@@ -1535,7 +1834,6 @@ async function init() {
       )
       .join("");
   $("#connect-qr").hidden = config.demo || !WC_PROJECT_ID;
-  setupPhoneWallet();
   if (window.ethereum && !wallets.some((w) => w.provider === window.ethereum))
     wallets.push({
       info: { name: "브라우저 지갑" },
@@ -1548,41 +1846,6 @@ async function init() {
   await refresh();
   status(readyText(), "success");
   await restoreWallet();
-}
-// "Open on a phone wallet": the PC shows this page as a QR; a phone browser without a wallet
-// lists each wallet app's deep link into its own browser. Live builds only, no relay.
-const onPhone = () =>
-  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-function fillWalletLinks(url) {
-  for (const box of document.querySelectorAll("[data-wallet-links]")) {
-    box.replaceChildren(
-      ...walletLinks(url).map(({ id, name, href }) => {
-        const a = document.createElement("a");
-        a.className = "button outline small";
-        a.dataset.walletLink = id;
-        a.href = href;
-        a.rel = "noopener";
-        a.textContent = name;
-        return a;
-      }),
-    );
-  }
-}
-function setupPhoneWallet() {
-  if (config.demo) return;
-  const target = phoneUrl(location.href);
-  fillWalletLinks(target);
-  $("#open-on-phone").hidden = onPhone();
-  $("#wallet-choice").hidden = Boolean(
-    window.ethereum || !(onPhone() || wantsWalletChoice(location.href)),
-  );
-  $("#open-on-phone").onclick = async () => {
-    const QR = await import("qrcode");
-    $("#phone-qr").src = await QR.toDataURL(target, { margin: 1, width: 280 });
-    $("#phone-url").textContent = target;
-    $("#phone-dialog").showModal();
-  };
-  $("#phone-close").onclick = () => $("#phone-dialog").close();
 }
 init().catch((e) => {
   status(errorMessage(e), "error");

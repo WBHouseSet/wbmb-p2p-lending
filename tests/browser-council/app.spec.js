@@ -165,6 +165,90 @@ test("council market shows the council price, a fee tab and the fixed margins", 
   expect(errors).toEqual([]);
 });
 
+// What a visitor came to do sits at the top: the tabs, the price, the post button and the first
+// offer's own button are on the first screen, and everything that only explains follows the list.
+for (const [device, viewport] of [
+  ["phone", { width: 390, height: 844 }],
+  ["desktop", { width: 1280, height: 800 }],
+]) {
+  test(`on a ${device} the tabs, the price and the first offer are on the first screen; the explanations follow the list`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await ready(page);
+    for (const control of [
+      '[data-tab="borrow"]',
+      '[data-tab="lend"]',
+      '[data-tab="mine"]',
+      "#open-offer",
+      "#current-price",
+    ])
+      await expect(page.locator(control)).toBeInViewport({ ratio: 1 });
+    // The seeded lend offer (#2) can be taken without scrolling.
+    await expect(
+      page.locator('[data-offer="2"] [data-action="fill"]'),
+    ).toBeInViewport({ ratio: 1 });
+    const list = await page.locator("#cards").boundingBox();
+    for (const explanation of [
+      "#market-terms",
+      ".principle-tags",
+      "#offer-count",
+    ]) {
+      const box = await page.locator(explanation).boundingBox();
+      expect(box.y, explanation).toBeGreaterThan(list.y + list.height);
+    }
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
+test("the terms are summed up in one line above the list, and that line leads to the full terms", async ({
+  page,
+}) => {
+  // A screen short enough that the full terms cannot already be in view.
+  await page.setViewportSize({ width: 390, height: 600 });
+  await ready(page);
+  const brief = page.locator("#terms-brief");
+  const list = await page.locator("#cards").boundingBox();
+  expect((await brief.boundingBox()).y).toBeLessThan(list.y);
+  // The local market lends half the collateral's value, liquidates at 70% and charges 5% of interest.
+  await expect(brief).toContainText("담보 가치의 50%까지");
+  await expect(brief).toContainText("청산선 70%");
+  await expect(brief).toContainText("수수료 이자의 5%");
+  const terms = page.locator("#market-terms");
+  await expect(terms).not.toBeInViewport();
+  await brief.getByRole("link").click();
+  await expect(terms).toBeInViewport();
+});
+
+test("the post button names the side of the open tab and opens the form on that side", async ({
+  page,
+}) => {
+  await ready(page);
+  await account(page, 3);
+  const post = page.locator("#open-offer");
+  const side = page.locator('#offer-form [name="side"]');
+  const total = page.locator('#offer-form [name="total"]');
+  await page.locator('[data-tab="lend"]').click();
+  await expect(post).toContainText("빌려주기");
+  await post.click();
+  await expect(side).toHaveValue("1");
+  // The rest of the form follows the side: a lender types the MOVN and pledges nothing.
+  await expect(total).toBeEditable();
+  await expect(page.locator("#collateral-field")).toBeHidden();
+  await page.locator('[data-close="offer-dialog"]').click();
+  await page.locator('[data-tab="borrow"]').click();
+  await expect(post).toContainText("빌리기");
+  await post.click();
+  await expect(side).toHaveValue("0");
+  await expect(total).not.toBeEditable();
+  await expect(page.locator("#collateral-field")).toBeVisible();
+  await page.locator('[data-close="offer-dialog"]').click();
+});
+
 test("the fill dialog tells a lender what settlement pays: debt plus the bonus, not all collateral", async ({
   page,
 }) => {
@@ -193,8 +277,16 @@ test("borrower takes a lend offer, price falls, top-up rescues, further fall set
   await ready(page);
   await account(page, 1);
   await page.locator('[data-tab="borrow"]').click();
-  await page.locator('[data-fill-amount="2"]').fill("700");
+  // The borrower types what they pledge; the loan follows from it: half of 14 WBMB at price 100.
+  await expect(page.locator('[data-fill-amount="2"]')).toHaveCount(0);
+  await page.locator('[data-fill-collateral="2"]').fill("14");
+  await expect(page.locator('[data-fill-preview="2"]')).toContainText(
+    "700 MOVN",
+  );
   await page.locator('[data-offer="2"] [data-action="fill"]').click();
+  await expect(page.locator("#confirm-body")).toContainText(
+    "내가 받는 것: 700 MOVN",
+  );
   await expect(page.locator("#confirm-body")).toContainText(
     "배정 담보: 14 WBMB",
   );
@@ -271,7 +363,23 @@ test("posting a lend offer uses the council margins, then a fill gets the 70% li
   await commit(page, "거래 게시 완료");
   await account(page, 1);
   await page.locator('[data-tab="borrow"]').click();
-  await page.locator('[data-fill-amount="3"]').fill("90");
+  // Untouched, the field holds the collateral for the smallest fill (10 MOVN → 0.2 WBMB).
+  await expect(page.locator('[data-fill-collateral="3"]')).toHaveValue("0.2");
+  await expect(page.locator('[data-fill-preview="3"]')).toContainText(
+    "10 MOVN",
+  );
+  // Too little for the smallest fill: said under the field, and refused before the wallet.
+  await page.locator('[data-fill-collateral="3"]').fill("0.1");
+  await expect(page.locator('[data-fill-preview="3"]')).toContainText(
+    "0.2 WBMB 이상",
+  );
+  await page.locator('[data-offer="3"] [data-action="fill"]').click();
+  await expect(page.locator("#status")).toContainText("0.2 WBMB 이상");
+  await expect(page.locator("#confirm-dialog")).not.toBeVisible();
+  await page.locator('[data-fill-collateral="3"]').fill("1.8");
+  await expect(page.locator('[data-fill-preview="3"]')).toContainText(
+    "90 MOVN",
+  );
   await page.locator('[data-offer="3"] [data-action="fill"]').click();
   // 90 MOVN at 50% margin and price 100 needs 1.8 WBMB.
   await expect(page.locator("#confirm-body")).toContainText(
@@ -306,7 +414,10 @@ test("an expired council price blocks new fills and settlement and says why", as
   await expect(page.locator("#confirm-dialog")).not.toBeVisible();
   // An empty amount must still show the expiry reason, not an amount error.
   await page.locator('[data-tab="borrow"]').click();
-  await page.locator('[data-fill-amount="2"]').fill("");
+  await expect(page.locator('[data-fill-preview="2"]')).toContainText(
+    "가격이 만료",
+  );
+  await page.locator('[data-fill-collateral="2"]').fill("");
   await page.locator('[data-offer="2"] [data-action="fill"]').click();
   await expect(page.locator("#status")).toContainText("카운슬 가격이 만료");
 });
@@ -367,26 +478,47 @@ test("offers posted straight to the contract with other margins are not listed; 
   );
 });
 
-test("a borrow request with too little collateral is refused by the form, and one already on chain says why it cannot be filled", async ({
+test("a borrow request is sized by its collateral: the form works out the loan, and one short on chain says why it cannot be filled", async ({
   page,
 }) => {
   await ready(page);
   await account(page, 3);
   await page.locator("#open-offer").click();
-  await page.locator('#offer-form [name="total"]').fill("90");
+  const total = page.locator('#offer-form [name="total"]');
+  const minFill = page.locator('#offer-form [name="minFill"]');
+  // The amount is never typed: half the collateral's value at the council price (100).
+  await expect(total).not.toBeEditable();
   await page.locator('#offer-form [name="collateral"]').fill("0.01");
-  // 90 MOVN at 50% of collateral value and price 100 needs 1.8 WBMB.
-  await expect(page.locator("#collateral-hint")).toContainText("최소 1.8 WBMB");
-  await page.locator('#offer-form button[type="submit"]').click();
-  await expect(page.locator("#status")).toContainText("담보가 부족합니다");
-  await expect(page.locator("#status")).toContainText("최소 1.8 WBMB");
-  await expect(page.locator("#confirm-dialog")).not.toBeVisible();
-  // Enough collateral clears the warning and goes on to the confirmation.
+  await expect(total).toHaveValue("0.5");
+  await expect(page.locator("#collateral-hint")).toContainText(
+    "담보 가치의 50%",
+  );
   await page.locator('#offer-form [name="collateral"]').fill("1.8");
-  await expect(page.locator("#collateral-hint")).not.toHaveClass(/warning/);
+  await expect(total).toHaveValue("90");
+  // The smallest fill follows too (a tenth) until the poster sets their own.
+  await expect(minFill).toHaveValue("9");
+  await minFill.fill("30");
+  await page.locator('#offer-form [name="collateral"]').fill("2");
+  await expect(total).toHaveValue("100");
+  await expect(minFill).toHaveValue("30");
+  // Nothing to work a loan out of: no amount, and the form says so instead of posting.
+  await page.locator('#offer-form [name="collateral"]').fill("");
+  await expect(total).toHaveValue("");
   await page.locator('#offer-form button[type="submit"]').click();
-  await expect(page.locator("#confirm-dialog")).toBeVisible();
+  await expect(page.locator("#status")).toContainText("맡길 담보");
+  await expect(page.locator("#confirm-dialog")).not.toBeVisible();
+  await page.locator('#offer-form [name="collateral"]').fill("2");
+  await page.locator('#offer-form button[type="submit"]').click();
+  await expect(page.locator("#confirm-body")).toContainText("한도 100 MOVN");
+  await expect(page.locator("#confirm-body")).toContainText(
+    "내가 보내는 것: 2 WBMB",
+  );
   await page.locator("#confirm-cancel").click();
+  // A lender still types MOVN: there is no collateral to work it out of.
+  await page.locator("#open-offer").click();
+  await page.locator('#offer-form [name="side"]').selectOption("1");
+  await expect(total).toBeEditable();
+  await page.locator('[data-close="offer-dialog"]').click();
   // The contract itself accepts such a request, so one can already be on chain.
   const config = await deployment(page);
   const id = await onChain((provider) =>
@@ -407,6 +539,69 @@ test("a borrow request with too little collateral is refused by the form, and on
   await account(page, 3);
   await page.locator('[data-tab="mine"]').click();
   await expect(card).toContainText("회수한 뒤 담보를 늘려 다시 올리세요");
+});
+
+// The reader's best terms come first, so nobody has to compare numbers to see what is dear, and
+// a request still carrying an earlier council price is marked as cheap or dear against today's.
+test("offers are listed best terms first, and a request posted at another price is marked cheap or dear", async ({
+  page,
+}) => {
+  await ready(page);
+  const config = await deployment(page);
+  const post = (index, side, aprBps, total = us(20), collateral = 0n) =>
+    onChain((provider) =>
+      postDirect(provider, config, index, side, total, collateral, {
+        ...STANDARD,
+        aprBps,
+      }),
+    );
+  const dear = await post(2, 1, 2000);
+  const cheap = await post(2, 1, 300);
+  const sameAsCheap = await post(2, 1, 300);
+  // Requests: 20 MOVN on 1 WBMB is the ratio of price 40; 50 on 1 is today's 100; 20 on 0.01
+  // is far above it and cannot be filled.
+  const low = await post(3, 0, 200, us(20), wb("1"));
+  const high = await post(3, 0, 1500, us(20), wb("1"));
+  const today = await post(3, 0, 4000, us(50), wb("1"));
+  const short = await post(3, 0, 5000, us(20), wb("0.01"));
+  const order = async (tab, id) => {
+    await page.locator("#refresh").click();
+    await page.locator(`[data-tab="${tab}"]`).click();
+    await expect(page.locator(`[data-offer="${id}"]`)).toBeVisible();
+    return page
+      .locator("#cards [data-offer]")
+      .evaluateAll((cards) => cards.map((c) => Number(c.dataset.offer)));
+  };
+  // Borrowing: the lowest rate first; the older post first at the same rate.
+  const borrow = await order("borrow", cheap);
+  expect(borrow.slice(0, 2)).toEqual([cheap, sameAsCheap]);
+  expect(borrow.at(-1)).toBe(dear);
+  await expect(page.locator("#cards [data-price-mark]")).toHaveCount(0);
+  // Lending: the lowest posted price first (most collateral behind each MOVN), the higher rate
+  // first at the same price; today's price after them; what cannot be filled last.
+  const lend = await order("lend", low);
+  expect(lend.slice(0, 2)).toEqual([high, low]);
+  expect(lend.indexOf(today)).toBeGreaterThan(lend.indexOf(low));
+  expect(lend.indexOf(short)).toBeGreaterThan(lend.indexOf(today));
+  const mark = (id) => page.locator(`[data-offer="${id}"] [data-price-mark]`);
+  await expect(mark(high)).toHaveAttribute("data-price-mark", "cheap");
+  await expect(mark(high)).toHaveText("이전 시세 · 지금보다 쌈");
+  await expect(page.locator(`[data-offer="${high}"]`)).toContainText(
+    "올릴 때 시세 40 MOVN",
+  );
+  await expect(mark(today)).toHaveText("현재 시세");
+  await expect(mark(short)).toHaveText("이전 시세 · 지금보다 비쌈");
+  await expect(page.locator(`[data-offer="${short}"]`)).toContainText(
+    "담보 부족",
+  );
+  // The council price moves: what was today's request now carries an earlier, dearer price.
+  await setPrice(page, 80);
+  await expect(mark(today)).toHaveText("이전 시세 · 지금보다 비쌈");
+  await expect(
+    page.locator(`[data-offer="${today}"] [data-action="fill"]`),
+  ).toHaveCount(0);
+  await setPrice(page, 100);
+  await expect(mark(today)).toHaveText("현재 시세");
 });
 
 test("before the first price report the page says so, shows no number and blocks fills", async ({
@@ -454,4 +649,22 @@ test("a refused grace names the market's own minimum, read from the chain", asyn
   await expect(page.locator("#status")).toContainText(
     "이 시장은 유예 2일 이상인 조건만 게시할 수 있습니다",
   );
+});
+
+test("an empty list offers the post button right there, on the open tab's side", async ({
+  page,
+}) => {
+  // A market nobody has posted to yet.
+  const config = await onChain(async (provider) =>
+    marketWithoutPrice(provider, await deployment(page), DAY),
+  );
+  await serve(page, config);
+  await ready(page);
+  await account(page, 2);
+  await page.locator('[data-tab="lend"]').click();
+  const empty = page.locator("#cards .empty");
+  await expect(empty).toContainText("아직 열린 거래가 없습니다");
+  await empty.getByRole("button").click();
+  await expect(page.locator("#offer-dialog")).toBeVisible();
+  await expect(page.locator('#offer-form [name="side"]')).toHaveValue("1");
 });

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f6f8f6" />
+    <meta name="theme-color" content="#f4f6f5" />
     <title>WBMB Commons · P2P 대출</title>
   </head>
   <body>
@@ -12,10 +12,12 @@
       사용하지 않습니다
     </div>
     <header class="header shell">
-      <a class="brand" href="/" aria-label="WBMB Commons 홈"
-        ><span class="brand-icon">w</span
-        ><span>WBMB <strong>Commons</strong></span></a
-      >
+      <h1 class="brand-title">
+        <a class="brand" href="/" aria-label="WBMB Commons 홈"
+          ><span class="brand-icon">w</span
+          ><span>WBMB <strong>Commons</strong></span></a
+        >
+      </h1>
       <div class="wallet-actions">
         <select id="demo-account" aria-label="체험 지갑 선택">
           <option value="">체험 지갑 선택</option>
@@ -25,70 +27,11 @@
           aria-label="설치된 지갑 선택"
           hidden
         ></select>
-        <button id="open-on-phone" class="button outline" hidden>
-          휴대폰 지갑으로 열기
-        </button>
         <button id="connect-qr" class="button outline" hidden>QR로 연결</button>
         <button id="connect" class="button outline">지갑 연결</button>
       </div>
     </header>
     <main class="shell">
-      <section id="wallet-choice" class="wallet-choice" hidden>
-        <h2>지갑 앱에서 열기</h2>
-        <p class="note">
-          이 브라우저에는 지갑이 없습니다. 쓰는 지갑 앱을 누르면 그 앱 안의
-          브라우저에서 이 화면이 열리고, 거기서 지갑을 연결할 수 있습니다.
-          네트워크는 BNB Smart Chain 이어야 합니다.
-        </p>
-        <div class="wallet-links" data-wallet-links></div>
-      </section>
-      <section class="hero">
-        <div>
-          <p class="eyebrow">COMMUNITY-OWNED CREDIT</p>
-          <h1>조건은 우리가.<br />거래는 투명하게.</h1>
-          <p class="hero-copy">
-            WBMB를 맡기고 빌리거나, MOVN을 빌려주세요.<br />금리와 기간을 직접
-            정하고, 원하는 만큼 참여하세요.
-          </p>
-          <button id="open-offer" class="button primary">
-            거래 제안하기 <span>↗</span>
-          </button>
-        </div>
-        <aside class="principles">
-          <div class="orbit"><span>WBMB</span><i>⇄</i><span>MOVN</span></div>
-          <p>사람과 사람 사이의 대출</p>
-          <div class="principle-tags">
-            <span>직접 정하는 금리</span><span>소액 참여</span
-            ><span id="fee-tag">개발자 수익 0</span>
-          </div>
-          <small
-            >정상 상환은 MOVN으로, 담보 정산은 WBMB로.<br />MOVN 원금 회수를
-            보장하지 않습니다.</small
-          >
-        </aside>
-      </section>
-      <section class="metrics" aria-label="시장 정보">
-        <div>
-          <span id="week-label">7일 구간평균 최저가 · 모의</span
-          ><strong id="week-price">—</strong><small>MOVN / WBMB</small>
-        </div>
-        <div>
-          <span id="current-label">현재 평가가격 · 모의</span
-          ><strong id="current-price">—</strong
-          ><small id="price-state">가격 확인 중</small>
-        </div>
-        <div>
-          <span>게시된 거래</span><strong id="offer-count">—</strong
-          ><small>온체인 게시 누계</small>
-        </div>
-        <div>
-          <span>성사된 대출</span><strong id="loan-count">—</strong
-          ><small>부분 체결별 독립 계약</small>
-        </div>
-      </section>
-      <div id="status" role="status" aria-live="polite">
-        로컬 체인에 연결하고 있습니다…
-      </div>
       <section id="wallet-panel" class="wallet-panel" hidden>
         <div>
           <span id="account-label"></span><small id="account-address"></small>
@@ -96,27 +39,117 @@
         <div id="wallet-balances"></div>
         <button id="disconnect" class="text-button">연결 해제</button>
       </section>
-      <section class="market">
-        <div class="market-heading">
-          <div>
-            <p class="eyebrow">THE MARKETPLACE</p>
-            <h2>나에게 맞는 거래를 찾아보세요</h2>
+      <!-- What a visitor came to do comes first; everything that only explains is in the guide below. -->
+      <section class="market" aria-label="거래">
+        <div class="market-bar">
+          <nav class="tabs" aria-label="거래 구분">
+            <button data-tab="borrow" class="active" aria-pressed="true">
+              <span class="tab-unit">MOVN </span>빌리기</button
+            ><button data-tab="lend" aria-pressed="false">
+              <span class="tab-unit">MOVN </span>빌려주기</button
+            ><button data-tab="mine" aria-pressed="false">내 거래</button
+            ><button data-tab="burn" aria-pressed="false">소각 내역</button>
+          </nav>
+          <div class="market-actions">
+            <button id="open-offer" class="button primary">제안 올리기</button>
+            <button
+              id="refresh"
+              class="button outline"
+              aria-label="새로고침"
+              title="새로고침"
+            >
+              <span class="refresh-text">새로고침 </span>↻
+            </button>
           </div>
-          <button id="refresh" class="button outline small">새로고침 ↻</button>
         </div>
-        <nav class="tabs" aria-label="거래 구분">
-          <button data-tab="borrow" class="active" aria-pressed="true">
-            MOVN 빌리기</button
-          ><button data-tab="lend" aria-pressed="false">MOVN 빌려주기</button
-          ><button data-tab="mine" aria-pressed="false">내 거래</button
-          ><button data-tab="burn" aria-pressed="false">소각 내역</button>
-        </nav>
+        <div class="summary">
+          <div class="ticker" aria-label="시장 정보">
+            <span id="current-label" class="ticker-label"
+              >현재 평가가격 · 모의</span
+            >
+            <span class="ticker-value"
+              ><strong id="current-price">—</strong
+              ><span class="ticker-unit">MOVN / WBMB</span></span
+            >
+            <small id="price-state">가격 확인 중</small>
+            <span class="ticker-side"
+              ><span id="week-label" class="ticker-label"
+                >7일 구간평균 최저가 · 모의</span
+              >
+              <strong id="week-price">—</strong></span
+            >
+          </div>
+          <p id="terms-brief" class="terms-brief" hidden></p>
+        </div>
+        <div id="status" role="status" aria-live="polite">
+          로컬 체인에 연결하고 있습니다…
+        </div>
         <div id="tab-description" class="tab-description"></div>
-        <div id="market-terms" class="market-terms" hidden></div>
         <div id="cards" class="cards" aria-busy="false"></div>
         <button id="load-more" class="button outline" hidden>
           이전 거래 더 보기
         </button>
+        <p id="legacy-market" class="legacy-market" hidden>
+          <span id="legacy-market-text"></span>
+          <a id="legacy-market-link"></a>
+        </p>
+      </section>
+      <section id="guide" class="guide" aria-labelledby="guide-title">
+        <p class="eyebrow">GUIDE</p>
+        <h2 id="guide-title">이용 안내</h2>
+        <p class="guide-lead">
+          조건은 우리가, 거래는 투명하게. WBMB를 맡기고 빌리거나 MOVN을
+          빌려주세요. 금리와 기간을 직접 정하고, 원하는 만큼 참여합니다.
+        </p>
+        <div class="guide-grid">
+          <article id="guide-terms" class="guide-card">
+            <h3>이 시장의 조건</h3>
+            <div id="market-terms" class="market-terms" hidden></div>
+          </article>
+          <article class="guide-card">
+            <h3>이용 방법</h3>
+            <ol class="steps">
+              <li>
+                <strong>빌리기</strong>
+                <span
+                  >WBMB를 담보로 맡기고 MOVN을 빌립니다. 기한 안에 갚으면 담보를
+                  돌려받습니다.</span
+                >
+              </li>
+              <li>
+                <strong>빌려주기</strong>
+                <span
+                  >금리와 기간을 정해 MOVN을 빌려줍니다. 상환되면 원금과 이자를
+                  MOVN으로 받습니다.</span
+                >
+              </li>
+              <li>
+                <strong>정산</strong>
+                <span
+                  >정상 상환은 MOVN으로, 담보 정산은 WBMB로 받습니다. MOVN 원금
+                  회수를 보장하지 않습니다.</span
+                >
+              </li>
+            </ol>
+            <div class="principle-tags">
+              <span>직접 정하는 금리</span><span>소액 참여</span
+              ><span id="fee-tag">개발자 수익 0</span>
+            </div>
+          </article>
+          <article class="guide-card">
+            <h3>시장 현황</h3>
+            <div class="metrics">
+              <div>
+                <span>게시된 거래</span><strong id="offer-count">—</strong
+                ><small>온체인 게시 누계</small>
+              </div>
+              <div>
+                <span>성사된 대출</span><strong id="loan-count">—</strong
+                ><small>부분 체결별 독립 계약</small>
+              </div>
+            </div>
+          </article>
+        </div>
       </section>
       <details class="lab">
         <summary>
@@ -206,21 +239,15 @@
               <option value="1">MOVN 빌려주기</option>
             </select></label
           >
-          <label
-            >총 대출 한도 (MOVN)<input
-              name="total"
-              value="90"
-              inputmode="decimal"
-              required
-          /></label>
           <label id="collateral-field"
             ><span id="collateral-label">맡길 담보 (WBMB)</span
-            ><input name="collateral" value="1" inputmode="decimal" /><small
-              id="collateral-hint"
-              class="field-hint"
-              hidden
-            ></small
-          ></label>
+            ><input name="collateral" value="1" inputmode="decimal"
+          /></label>
+          <label
+            ><span id="total-label">총 대출 한도 (MOVN)</span
+            ><input name="total" value="90" inputmode="decimal" required
+          /></label>
+          <small id="collateral-hint" class="field-hint full" hidden></small>
           <label
             >최소 참여액 (MOVN)<input
               name="minFill"
@@ -264,36 +291,13 @@
             </select></label
           >
         </div>
-        <div class="note" id="terms-note"></div>
         <p id="mode-warning" class="note warning" hidden>
           만기형은 가격이 내려가도 청산되지 않습니다. 만기·유예 후 미상환이면
           추가 담보를 포함한 남은 WBMB 전부가 대출자에게 넘어갑니다.
         </p>
         <button class="button primary full" type="submit">조건 확인하기</button>
+        <div class="note" id="terms-note"></div>
       </form>
-    </dialog>
-    <dialog id="phone-dialog">
-      <div class="qr-box">
-        <h2>휴대폰 지갑으로 열기</h2>
-        <p class="note">
-          휴대폰 지갑 앱의 QR 스캔으로 찍으면 지갑 앱 안에서 이 화면이 열립니다.
-          일반 카메라로 찍으면 지갑 앱을 고르는 화면이 나옵니다. 외부 연결
-          서버를 쓰지 않습니다.
-        </p>
-        <img
-          id="phone-qr"
-          alt="이 화면 주소 QR 코드"
-          width="280"
-          height="280"
-        />
-        <code id="phone-url"></code>
-        <div class="wallet-links" data-wallet-links></div>
-        <div class="row-actions">
-          <button id="phone-close" class="button outline small" type="button">
-            닫기
-          </button>
-        </div>
-      </div>
     </dialog>
     <dialog id="qr-dialog">
       <div class="qr-box">
@@ -334,6 +338,7 @@
         </button>
       </div>
     </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <script type="module" src="/src/app.js"></script>
   </body>
 </html>
