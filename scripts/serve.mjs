@@ -2,9 +2,6 @@
 // listing, nothing outside WEB_DIR.
 //
 //   LISTEN           plain HTTP, comma-separated host:port (default 0.0.0.0:5000)
-//   MOUNTS           optional earlier builds beside the current one, comma-separated /path=dir
-//                    (e.g. /usdt=dist-legacy-usdt): a market that was replaced keeps a page, so
-//                    offers and loans left on it can still be seen, cancelled and repaid
 //   REDIRECT_LISTEN  optional HTTP listener for the router's port 80: answers Let's Encrypt
 //                    challenges from ACME_DIR and sends everything else to https://PUBLIC_HOST
 //   TLS_LISTEN       optional HTTPS listener for the router's port 443, with TLS_CERT/TLS_KEY;
@@ -95,40 +92,13 @@ function contentPolicy(root) {
   ].join("; ");
 }
 
-// "/path=dir,…" as [{ prefix, root }]. A prefix is one lower-case path segment.
-function mountList(list) {
-  return String(list || "")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .map((x) => {
-      const at = x.indexOf("=");
-      const prefix = x.slice(0, Math.max(at, 0));
-      if (!/^\/[a-z0-9-]+$/.test(prefix) || !x.slice(at + 1))
-        throw new Error(`MOUNTS 항목은 /경로=폴더 형식이어야 합니다: ${x}`);
-      return { prefix, root: path.resolve(x.slice(at + 1)) };
-    });
-}
-
-// The current site at "/", each mounted one under its prefix. A mounted page gets the policy
-// of its own deployment.json.
-function siteHandler(root, mounts = []) {
-  const sites = [...mounts, { prefix: "", root }].map((s) => ({
-    ...s,
-    policy: contentPolicy(s.root),
-  }));
+function siteHandler(root) {
+  const policy = contentPolicy(root);
   return (req, res) => {
     if (req.method !== "GET" && req.method !== "HEAD")
       return reply(res, 405, "Method Not Allowed");
     let name = pathname(req);
     if (name === null) return reply(res, 400, "Bad Request");
-    const { prefix, root, policy } = sites.find(
-      (s) => name === s.prefix || name.startsWith(s.prefix + "/"),
-    );
-    // Relative addresses in a mounted page only resolve from the path with the slash.
-    if (name === prefix)
-      return reply(res, 301, "Moved Permanently", { Location: `${prefix}/` });
-    name = name.slice(prefix.length);
     if (name.endsWith("/")) name += "index.html";
     const file = inside(root, name);
     if (!file) return reply(res, 404, "Not Found");
@@ -176,7 +146,6 @@ const listenOn = (server, { host, port }) =>
 
 export async function startServer({
   webDir,
-  mounts,
   listen = "0.0.0.0:5000",
   acmeDir,
   redirectListen,
@@ -195,15 +164,7 @@ export async function startServer({
     throw new Error(
       "REDIRECT_LISTEN 에는 PUBLIC_HOST(공개 도메인)가 필요합니다.",
     );
-  const mounted = mountList(mounts);
-  for (const m of mounted)
-    if (!fs.existsSync(path.join(m.root, "index.html")))
-      throw new Error(
-        `MOUNTS: ${m.root}/index.html 이 없습니다. 그 빌드를 먼저 만들어야 합니다.`,
-      );
-  const site = siteHandler(root, mounted);
-  for (const m of mounted)
-    log(`${m.root} 을 ${m.prefix}/ 아래에서 제공합니다.`);
+  const site = siteHandler(root);
   const servers = [];
   const ports = { http: [] };
   for (const a of addresses(listen)) {
@@ -252,7 +213,6 @@ export async function startServer({
 if (process.argv[1]?.endsWith("serve.mjs")) {
   const server = await startServer({
     webDir: process.env.WEB_DIR,
-    mounts: process.env.MOUNTS,
     listen: process.env.LISTEN || "0.0.0.0:5000",
     acmeDir: process.env.ACME_DIR,
     redirectListen: process.env.REDIRECT_LISTEN,

@@ -125,9 +125,8 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.equal(await lending.pricePolicy(), ZeroAddress);
     assert.equal(await lending.feeVault(), wallet.address);
     assert.equal(await lending.oracleFree(), true);
-    // The record names MOVN (never a USDT key) and the deployer printed the symbol it checked.
+    // The record names MOVN and the deployer printed the symbol it checked.
     assert.equal(record.movn, BSC.movn);
-    assert.equal(record.usdt, undefined);
     assert.match(
       logs.join("\n"),
       /토큰 확인  MOVN 0x[0-9a-fA-F]{40} \(MOVN, 18 decimals\)/,
@@ -160,14 +159,11 @@ describe("mainnet deploy script rehearsal (local chain id 56)", () => {
     assert.deepEqual(liveAbiNames(record), ["P2PLending"]);
   });
 
-  it("a USDT-era record (usdt key, no movn key) is refused by the web config builders", () => {
+  it("a record without a movn address is refused by the web config builders", () => {
     const record = JSON.parse(
       fs.readFileSync(path.join(outDir, "bsc-movn.json"), "utf8"),
     );
-    const old = {
-      ...record,
-      usdt: "0x55d398326f99059fF775485246999027B3197955",
-    };
+    const old = { ...record };
     delete old.movn;
     assert.throws(() => liveWebConfig(old), /movn 주소가 없습니다/);
     assert.throws(() => livePinned(old), /movn 주소가 없습니다/);

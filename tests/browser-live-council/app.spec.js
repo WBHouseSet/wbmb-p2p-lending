@@ -129,9 +129,8 @@ test("live council page shows the relayed price and no demo controls", async ({
   await expect(risk).toContainText("시장 컨트랙트 자체를 막으면");
   await expect(page.locator("#movn-risk-council")).toBeVisible();
   await expect(risk).toContainText("1달러");
-  // The verify block links the MOVN token to the explorer, never USDT.
+  // The verify block links the MOVN token to the explorer.
   await expect(page.locator("#verify-addresses")).toContainText("MOVN 토큰");
-  await expect(page.locator("#verify-addresses")).not.toContainText("USDT");
   expect(errors).toEqual([]);
 });
 
@@ -254,13 +253,13 @@ test("a reload keeps the wallet and the open tab, so my post stays in view; disc
   await expect(lender.locator("#connect")).toHaveText("지갑 연결");
 });
 
-test("rejects a file whose MOVN address is swapped for USDT", async ({
+test("rejects a file whose MOVN address is swapped for another token", async ({
   page,
 }) => {
   await page.route("**/deployment.json", async (route) => {
     const response = await route.fetch();
     const json = await response.json();
-    json.addresses.movn = "0x55d398326f99059fF775485246999027B3197955";
+    json.addresses.movn = "0x9E4c611B834672c3643D9818249366bf65ae4C86";
     await route.fulfill({ response, json });
   });
   await page.goto("/");

@@ -99,9 +99,6 @@ const PINNED = typeof __PINNED__ === "undefined" ? null : __PINNED__;
 // WalletConnect project id, compiled into a live build that offers QR connection ("" otherwise).
 const WC_PROJECT_ID =
   typeof __WC_PROJECT_ID__ === "undefined" ? "" : __WC_PROJECT_ID__;
-// An earlier market whose page is served beside this one ({ token, path }), or null.
-const LEGACY_MARKET =
-  typeof __LEGACY_MARKET__ === "undefined" ? null : __LEGACY_MARKET__;
 let feePct = "5";
 // Exact amount with no rounding, for what the user is about to sign.
 const full = (n, d = 18) => formatUnits(n, d).replace(/\.0$/, "");
@@ -1676,18 +1673,6 @@ function renderVerify() {
   $("#movn-risk-council").hidden = !council();
 }
 
-// Offers and loans on the earlier market are not in this page's lists: point to its page.
-function showLegacyMarket() {
-  if (!LEGACY_MARKET) return;
-  const { token, path } = LEGACY_MARKET;
-  $("#legacy-market-text").textContent =
-    `${token}로 올린 예전 제안과 대출은 이 목록에 나오지 않습니다.`;
-  const link = $("#legacy-market-link");
-  link.textContent = `이전 ${token} 시장 열기 →`;
-  link.href = path;
-  $("#legacy-market").hidden = false;
-}
-
 async function init() {
   const responses = await Promise.all([
     fetch("/deployment.json", { cache: "no-store" }),
@@ -1698,7 +1683,6 @@ async function init() {
       "배포 설정을 찾을 수 없습니다. 로컬 체험은 프로젝트 폴더에서 npm run dev를 실행하세요.",
     );
   [config, abis] = await Promise.all(responses.map((r) => r.json()));
-  showLegacyMarket();
   const demoOk =
     config.demo === true &&
     config.chainId === 31337 &&

@@ -226,61 +226,11 @@ describe("CouncilPricePolicy", () => {
   });
 });
 
-// The quote token is MOVN since 2026-10-04: reports signed for the USDT-era domain must not
-// be accepted by a policy deployed under the new id, whatever else matches.
 describe("MOVN report domain", () => {
-  let c, provider, admin, reporters, policy;
-  const MAX_AGE = 6 * 86400;
-  const USDT_ID = keccak256(toUtf8Bytes("wbmb-usdt/mobick-council/v1"));
-  before(async () => {
-    c = await network.create();
-    provider = new BrowserProvider(c.provider, undefined, { cacheTimeout: -1 });
-    provider.pollingInterval = 10;
-    admin = await provider.getSigner(0);
-    reporters = [0, 1].map(() => Wallet.createRandom().connect(provider));
-    policy = await deployContract("CouncilPricePolicy", admin, [
-      reporters.map((w) => w.address),
-      1,
-      COUNCIL_POLICY_ID,
-      MAX_AGE,
-      3000,
-      300,
-    ]);
-  });
-  after(async () => {
-    provider?.destroy();
-    await c?.close();
-  });
-  async function report(over = {}) {
-    const t = Number((await provider.getBlock("latest")).timestamp);
-    return {
-      policyId: COUNCIL_POLICY_ID,
-      roundId: 1,
-      price: us(112.3),
-      confirmedAt: t,
-      validUntil: t + MAX_AGE - 60,
-      ...over,
-    };
-  }
   it("policyId names MOVN as the quote token", () => {
     assert.equal(
       COUNCIL_POLICY_ID,
       keccak256(toUtf8Bytes("wbmb-movn/mobick-council/v1")),
     );
-    assert.notEqual(COUNCIL_POLICY_ID, USDT_ID);
-  });
-  it("a report under the old USDT domain is refused, the same report under MOVN is accepted", async () => {
-    await assert.rejects(
-      submitCouncilReport(
-        policy,
-        await report({ policyId: USDT_ID }),
-        reporters.slice(0, 1),
-      ),
-      /BAD_POLICY/,
-    );
-    await (
-      await submitCouncilReport(policy, await report(), reporters.slice(0, 1))
-    ).wait();
-    assert.equal(await policy.current(), us(112.3));
   });
 });

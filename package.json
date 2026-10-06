@@ -18,7 +18,7 @@
     "relay:council": "node scripts/relay-council.mjs",
     "build:live": "RECORD=deployments/bsc-movn.json node scripts/build-live.mjs",
     "build:live:council": "RECORD=deployments/bsc-council-movn.json OUT_DIR=dist-live-council node scripts/build-live.mjs",
-    "build:live:council-test": "LEGACY_MARKET=USDT=/usdt/ RECORD=deployments/bsc-council-movn-test.json OUT_DIR=dist-live-council-test node scripts/build-live.mjs",
+    "build:live:council-test": "RECORD=deployments/bsc-council-movn-test.json OUT_DIR=dist-live-council-test node scripts/build-live.mjs",
     "test:live": "playwright test -c playwright.live.config.js && playwright test -c playwright.live-council.config.js",
     "test:real-web": "playwright test -c playwright.real.config.js",
     "rehearse": "npm run test:real && npm run test:live"

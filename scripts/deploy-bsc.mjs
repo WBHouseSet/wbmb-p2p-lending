@@ -66,8 +66,6 @@ export function loadDeployer(secret, provider, index = 0) {
 // full default-and-settle cycle can be checked in minutes. The council profiles add a price
 // policy fed by the council price relay.
 export const PROFILES = {
-  // The USDT-era markets keep their old record files (bsc.json, bsc-test.json,
-  // bsc-council-test.json); every MOVN deployment writes a -movn file.
   main: { file: "bsc-movn.json", minDuration: 3600, minGrace: 86400 },
   test: { file: "bsc-movn-test.json", minDuration: 300, minGrace: 300 },
   council: {
@@ -383,12 +381,12 @@ export async function deployBsc({
 }
 
 /// Web config for a live deployment record (what the page fetches as /deployment.json).
-/// Records written before 2026-10-04 carry `usdt`; a page built from one would read an
-/// undefined token address, so refuse them here rather than at the first wallet click.
+/// A page built from a record without a MOVN address would read an undefined token address,
+/// so refuse it here rather than at the first wallet click.
 function requireMovn(record) {
   if (!record.movn)
     throw new Error(
-      "기록에 movn 주소가 없습니다. USDT 시절 기록은 이 빌드로 쓸 수 없습니다.",
+      "기록에 movn 주소가 없습니다. 이 기록은 이 빌드로 쓸 수 없습니다.",
     );
   // On BSC the quote token is exactly MOVN; a hand-edited record is refused here too.
   if (

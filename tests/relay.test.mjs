@@ -548,8 +548,8 @@ describe("relayCouncil with the deployed limits, on a local chain", () => {
   });
 });
 
-// The CLI's record file can be overridden, so an operator can keep relaying to an older
-// market (the USDT-era council test market) while new deployments write -movn records.
+// The CLI's record file can be overridden, so an operator can relay to a market other than
+// the default one.
 describe("relay CLI record selection", () => {
   it("RELAY_RECORD names the record file the CLI reads", async () => {
     const { spawnSync } = await import("node:child_process");

@@ -184,8 +184,7 @@ export async function relayCouncil({
 }
 
 if (process.argv[1]?.endsWith("relay-council.mjs")) {
-  // RELAY_RECORD overrides the record file (e.g. to keep serving the USDT-era council test
-  // market, deployments/bsc-council-test.json). The relay signs with the policy's own id.
+  // RELAY_RECORD overrides the record file. The relay signs with the policy's own id.
   const recordFile =
     process.env.RELAY_RECORD ||
     (process.argv.includes("--test-market")
