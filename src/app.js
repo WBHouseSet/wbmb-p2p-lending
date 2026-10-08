@@ -307,6 +307,41 @@ const ratioText = (o) =>
   o.collateralTotal > 0n
     ? `1 WBMB당 ${fmt((o.total * 100000000n) / o.collateralTotal)} MOVN`
     : "—";
+// The WBMB/MOVN trade board, when this deployment has one.
+const swapOn = () => Boolean(contracts?.swap);
+let swapOffers = [],
+  mySwapOffers = [],
+  swapFeeBps = 0n,
+  swapFeeVault = "";
+const swapFeePct = () => percent(swapFeeBps);
+// The price a trade is compared with: the live council price, or none.
+const swapReference = () =>
+  council() && priceSet && priceLive && currentPrice > 0n ? currentPrice : null;
+// How far `price` is from the council price, in percent to one decimal (null without a reference).
+const swapGap = (price) => {
+  const reference = swapReference();
+  return reference === null
+    ? null
+    : Number(((price - reference) * 1000n) / reference) / 10;
+};
+const gapNumber = (gap) =>
+  Math.abs(gap).toLocaleString("ko-KR", { maximumFractionDigits: 1 });
+// From this far against the user (selling cheap, buying dear) the page asks once more. The
+// contract itself accepts any price.
+const SWAP_WARN_PCT = 20;
+const swapWarning = (selling, price) => {
+  const gap = swapGap(price);
+  if (gap === null || (selling ? gap > -SWAP_WARN_PCT : gap < SWAP_WARN_PCT))
+    return null;
+  return `카운슬 가격(${fmt(swapReference())} MOVN)보다 ${gapNumber(gap)}% ${selling ? "싸게 팔게" : "비싸게 사게"} 됩니다.\nWBMB 1개 = ${full(price)} MOVN 이 맞는지 숫자와 자릿수를 다시 확인하세요.`;
+};
+// MOVN for `value` WBMB at `price`, rounded the way the contract rounds it.
+const swapCost = (value, price, up) =>
+  (value * price + (up ? 99999999n : 0n)) / 100000000n;
+const swapSpender = () =>
+  `승인 대상 컨트랙트: ${contracts.swap.target} (토큰 사용 승인은 이 주소에만 합니다)`;
+const swapFeeLine = () =>
+  `수수료는 수수료 지갑 ${swapFeeVault} 으로 갑니다. 소각되지 않습니다.`;
 let config,
   abis,
   read,
@@ -407,6 +442,11 @@ function errorMessage(e) {
     OFFER_CLOSED: "이미 체결·취소됐거나 만료된 거래입니다.",
     BAD_FILL: "체결 금액은 최소 참여액 이상, 남은 금액 이하여야 합니다.",
     SELF_FILL: "자신이 게시한 거래는 직접 체결할 수 없습니다.",
+    PRICE_MISMATCH:
+      "게시글의 가격이 확인한 가격과 다릅니다. 새로고침한 뒤 다시 확인하세요.",
+    ZERO_PAYMENT:
+      "수량이 너무 작아 대금이 0이 됩니다. 더 큰 수량으로 체결하세요.",
+    NO_FEES: "옮길 수수료가 없습니다.",
     REPAY_SLIPPAGE: "상환 견적이 바뀌었습니다. 금액을 다시 확인하세요.",
     NOT_ACTIVE: "이미 종료된 대출입니다.",
     BAD_OUTPUT: "모의 소각 수량이 너무 작거나 견적이 달라졌습니다.",
@@ -744,7 +784,11 @@ async function txAction(title, message, action) {
       if (receipt.status !== 1) throw new Error("거래가 되돌려졌습니다.");
       return receipt;
     };
-    const approve = async (token, value) => {
+    const approve = async (
+      token,
+      value,
+      spender = contracts.lending.target,
+    ) => {
       await assertSession();
       // Without enough tokens the transfer would revert inside gas estimation and the wallet
       // would show a raw error; say what is missing before anything is sent.
@@ -757,17 +801,13 @@ async function txAction(title, message, action) {
         );
       }
       const contract = token.connect(activeSigner),
-        current = await token.allowance(
-          activeAddress,
-          contracts.lending.target,
-        );
+        current = await token.allowance(activeAddress, spender);
       if (current < value) {
         // Two prompts follow: this approval, then the transaction itself.
         const what = "토큰 사용 승인(다음에 본 거래를 확인합니다)";
-        if (current > 0n)
-          await send(contract.approve(contracts.lending.target, 0), what);
+        if (current > 0n) await send(contract.approve(spender, 0), what);
         await assertSession();
-        await send(contract.approve(contracts.lending.target, value), what);
+        await send(contract.approve(spender, value), what);
       }
       await assertSession();
     };
@@ -892,6 +932,33 @@ async function refresh() {
       Promise.all(myLoanIds.map(loadLoan)),
     ]);
     more = Number(oc) > limit || Number(lc) > limit;
+    if (swapOn()) {
+      const count = await contracts.swap.offerCount();
+      const loadSwap = async (id) => {
+        const o = await contracts.swap.getOffer(id);
+        return {
+          id,
+          maker: o.maker,
+          side: Number(o.side),
+          closed: o.closed,
+          expiresAt: o.expiresAt,
+          price: o.price,
+          remaining: o.remaining,
+          minFill: o.minFill,
+        };
+      };
+      const mine = address
+        ? [...(await contracts.swap.offerIdsOf(address))]
+            .map(Number)
+            .reverse()
+            .slice(0, MY_LIMIT)
+        : [];
+      [swapOffers, mySwapOffers] = await Promise.all([
+        Promise.all(ids(count).map(loadSwap)),
+        Promise.all(mine.map(loadSwap)),
+      ]);
+      more ||= Number(count) > limit;
+    }
     if (address) {
       const [u, w] = await Promise.all([
         contracts.movn.balanceOf(address),
@@ -1036,10 +1103,43 @@ function loanCard(l) {
         : council()
           ? `카운슬 가격이 청산 가격 이하로 내려가거나 ${date(due)}까지 갚지 않으면 정산됩니다. 대출자는 빚 + ${bonusPct}%어치의 WBMB를 받고 나머지는 차입자에게 돌아갑니다. 담보를 추가하면 청산 가격이 내려갑니다.`
           : "담보 추가는 만기 연장이 아닙니다. 체결된 원금은 대출자가 임의 회수할 수 없습니다.";
-  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><div class="card-figures"><div class="figure"><h3>${fmt(l.debt, 18, 6)} <small>MOVN</small></h3><span class="sub">${open ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span></div></div>${factList([
-    ["배정 담보", `${fmt(l.collateral, 8, 8)} WBMB`],
-    ["고정 연이율", `${percent(l.terms.aprBps)}% APR`],
-  ])}${priced && open && l.collateral > 0n ? liquidationBlock(l) : ""}<div class="mode">${priced ? `갚는 기한 ${date(due)} (만기 ${date(l.maturity)})` : `${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}`}</div>${borrowerActions}${open ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${detail}</p></article>`;
+  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><div class="card-figures"><div class="figure"><h3>${fmt(l.debt, 18, 6)} <small>MOVN</small></h3><span class="sub">${open ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span></div></div>${factList(
+    [
+      ["배정 담보", `${fmt(l.collateral, 8, 8)} WBMB`],
+      ["고정 연이율", `${percent(l.terms.aprBps)}% APR`],
+    ],
+  )}${priced && open && l.collateral > 0n ? liquidationBlock(l) : ""}<div class="mode">${priced ? `갚는 기한 ${date(due)} (만기 ${date(l.maturity)})` : `${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}`}</div>${borrowerActions}${open ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${detail}</p></article>`;
+}
+// A trade post: the price leads, and what is left is shown in WBMB and in MOVN.
+function swapCard(o) {
+  const own = address?.toLowerCase() === o.maker.toLowerCase();
+  const active = !o.closed && Number(o.expiresAt) > latest;
+  const minimum = o.remaining < o.minFill ? o.remaining : o.minFill;
+  const sell = o.side === 0;
+  const gap = swapGap(o.price);
+  const gapText =
+    gap === null
+      ? "기준 가격 없음"
+      : gap === 0
+        ? "같음"
+        : `${gap > 0 ? "+" : "-"}${gapNumber(gap)}%`;
+  // Taking a sell offer buys WBMB; taking a buy offer sells it.
+  const fill =
+    active && !own
+      ? `<span class="fill-label">${sell ? "살" : "팔"} 수량 (WBMB)</span><div class="input-row"><input data-swap-amount="${o.id}" aria-label="직거래 ${o.id} 체결 수량 (WBMB)" value="${full(minimum, 8)}" inputmode="decimal" /><button class="button primary" data-action="swapFill" data-id="${o.id}">${sell ? "사기" : "팔기"}</button></div>`
+      : "";
+  const close =
+    own && !o.closed
+      ? `<div class="row-actions"><button class="button outline small" data-action="swapClose" data-id="${o.id}">미체결분 회수</button></div>`
+      : "";
+  return `<article class="card" data-swap-offer="${o.id}"><div class="card-top"><span class="badge ${sell ? "neutral" : ""}">${sell ? "WBMB 팝니다" : "WBMB 삽니다"}</span><span class="card-id">#${o.id} · ${esc(short(o.maker))}</span></div><div class="card-figures"><div class="figure"><strong>${fmt(o.price)} <small>MOVN</small></strong><span class="sub">WBMB 1개 가격</span></div><div class="figure end"><h3>${fmt(swapCost(o.remaining, o.price, false))} <small>MOVN</small></h3><span class="sub">${active ? "남은 수량 전체 대금" : o.closed ? "종료된 게시글" : "게시기간 만료"}</span></div></div>${factList(
+    [
+      ["남은 수량", `${fmt(o.remaining, 8, 8)} WBMB`],
+      ["최소 체결", `${fmt(minimum, 8, 8)} WBMB`],
+      ["카운슬 가격 대비", gapText],
+      ["게시 만료", date(o.expiresAt)],
+    ],
+  )}${fill}${close}</article>`;
 }
 async function render() {
   if (!contracts) return;
@@ -1051,13 +1151,14 @@ async function render() {
     borrow:
       "MOVN을 빌려주는 사람들의 제안입니다. 원하는 금액만큼 WBMB를 맡기고 참여하세요.",
     lend: "WBMB를 담보로 맡기는 사람들의 요청입니다. 조건을 확인하고 MOVN으로 일부 참여하세요.",
+    swap: `사람끼리 WBMB와 MOVN을 직접 사고팝니다. 체결하면 그 자리에서 맞교환되고, WBMB를 파는 쪽이 대금의 ${swapFeePct()}%를 수수료로 냅니다.`,
     mine: "내 게시글, 체결된 대출, 지금 수령할 수 있는 자산을 확인합니다.",
     burn: vault()
       ? `차입자가 낸 이자의 ${feePct}%가 별도 수수료로 쌓입니다.${settleFee() ? ` 정산으로 끝난 대출은 못 낸 이자의 ${feePct}%가 WBMB로 쌓입니다.` : ""} 현재는 소각하지 않고 아래 수수료 지갑으로 보관합니다.`
       : "지급된 이자의 별도 수수료만 소각 재원으로 사용합니다. 개발자에게 배분하지 않습니다.",
   };
   $("#tab-description").textContent = descriptions[tab];
-  $("#market-terms").hidden = !council() || tab === "burn";
+  $("#market-terms").hidden = !council() || tab === "burn" || tab === "swap";
   if (council()) $("#market-terms").innerHTML = councilTermsHtml();
   $("#load-more").hidden = !more || tab === "burn";
   let html = "";
@@ -1073,6 +1174,23 @@ async function render() {
     html =
       filtered.sort(bestTermsFirst(tab)).map(offerCard).join("") ||
       '<div class="empty">아직 열린 거래가 없습니다.<small>원하는 조건으로 첫 제안을 올려보세요.</small></div>';
+  } else if (tab === "swap") {
+    const open = swapOffers.filter(
+      (o) => !o.closed && Number(o.expiresAt) > latest,
+    );
+    const byPrice = (a, b) =>
+      a.price < b.price ? -1 : a.price > b.price ? 1 : 0;
+    const list = (side, order, empty) =>
+      open
+        .filter((o) => o.side === side)
+        .sort((a, b) => order * byPrice(a, b) || a.id - b.id)
+        .map(swapCard)
+        .join("") || `<div class="empty">${empty}</div>`;
+    html =
+      '<h3 class="section-title">팝니다 · 싼 가격부터</h3>' +
+      list(0, 1, "아직 파는 글이 없습니다.") +
+      '<h3 class="section-title">삽니다 · 비싼 가격부터</h3>' +
+      list(1, -1, "아직 사는 글이 없습니다.");
   } else if (tab === "mine") {
     if (!address)
       html =
@@ -1090,6 +1208,11 @@ async function render() {
       html +=
         '<h3 class="section-title">내 게시글</h3>' +
         myOffers.map(offerCard).join("");
+      if (swapOn())
+        html +=
+          '<h3 class="section-title">내 직거래 게시</h3>' +
+          (mySwapOffers.map(swapCard).join("") ||
+            '<div class="empty">아직 올린 직거래 글이 없습니다.</div>');
     }
   } else if (vault()) {
     const [pending, held, settled] = await Promise.all([
@@ -1101,6 +1224,10 @@ async function render() {
       ? `<article class="card"><span class="sub">정산 수수료 · WBMB</span><strong>${fmt(settled, 8, 8)}</strong><p class="sub">수수료 지갑이 직접 수령합니다 (그 지갑이 받을 다른 WBMB 포함 가능)</p></article>`
       : "";
     html = `<div class="burn-stats"><article class="card"><span class="sub">컨트랙트에 쌓인 수수료 · MOVN</span><strong>${fmt(pending, 18, 8)}</strong><div class="row-actions"><button class="button outline small" data-action="flush" ${pending === 0n ? "disabled" : ""}>수수료 지갑으로 이동</button></div></article><article class="card"><span class="sub">수수료 지갑 · ${esc(short(config.feeWallet))}</span><strong>${fmt(held, 18, 8)}</strong><p class="sub">지갑의 MOVN 잔액 전체 (수수료 외 금액 포함 가능)</p></article>${settledCard}</div><p class="burn-description">수수료 지갑 주소는 컨트랙트 생성 시 고정되어 바꿀 수 없습니다. 누구나 이동을 실행할 수 있지만 받는 곳은 항상 이 지갑입니다. 수수료는 소각되지 않으며 운영자가 보관합니다. 대출자 원금·이자와 담보는 수수료 지갑으로 이동할 수 없습니다.</p>`;
+    if (swapOn()) {
+      const tradeFees = await contracts.swap.feeBalance();
+      html += `<h3 class="section-title">직거래 수수료</h3><div class="burn-stats"><article class="card" data-swap-fees><span class="sub">직거래 컨트랙트에 쌓인 수수료 · MOVN</span><strong>${fmt(tradeFees, 18, 8)}</strong><div class="row-actions"><button class="button outline small" data-action="swapFlush" ${tradeFees === 0n ? "disabled" : ""}>수수료 지갑으로 이동</button></div></article></div><p class="burn-description">직거래에서는 WBMB를 파는 쪽이 대금의 ${swapFeePct()}%를 냅니다. 받는 곳은 ${esc(swapFeeVault)} 으로 고정되어 바꿀 수 없고, 수수료는 소각되지 않습니다.</p>`;
+    }
   } else {
     const [pending, ready, burned, used] = await Promise.all([
       contracts.lending.feeBalance(),
@@ -1148,11 +1275,62 @@ function syncFillPreview(field) {
 $("#cards").addEventListener("input", (e) => {
   if (e.target.dataset?.fillCollateral) syncFillPreview(e.target);
 });
+async function handleSwapAction(action, id) {
+  if (action === "swapFlush") {
+    const pending = await contracts.swap.feeBalance();
+    await txAction(
+      "직거래 수수료 이동",
+      `${fmt(pending, 18, 8)} MOVN을 직거래 컨트랙트에서 수수료 지갑으로 옮깁니다.\n${swapFeeLine()}`,
+      async (ctx) => {
+        await ctx.send(contracts.swap.connect(ctx.signer).flushFees());
+      },
+    );
+    return;
+  }
+  const o = await contracts.swap.getOffer(id);
+  const sell = Number(o.side) === 0;
+  if (action === "swapClose") {
+    await txAction(
+      "직거래 미체결분 회수",
+      `직거래 게시글 #${id}을 닫고 남은 ${sell ? full(o.remaining, 8) + " WBMB" : full(o.movnRemaining) + " MOVN"}을 돌려받습니다. 닫은 글은 다시 열 수 없습니다.`,
+      async (ctx) => {
+        await ctx.send(contracts.swap.connect(ctx.signer).closeOffer(id));
+      },
+    );
+    return;
+  }
+  const value = amount($(`[data-swap-amount="${id}"]`).value, 8);
+  const [gross, fee] = await contracts.swap.quoteFill(id, value);
+  // Filling a sell offer makes me the buyer; filling a buy offer makes me the seller.
+  const warning = swapWarning(!sell, o.price);
+  if (warning && !(await confirm("가격 경고", warning))) {
+    status("거래를 취소했습니다.");
+    return;
+  }
+  await txAction(
+    sell ? "WBMB 사기" : "WBMB 팔기",
+    `직거래 게시글 #${id} · WBMB 1개 = ${full(o.price)} MOVN\n내가 보내는 것: ${sell ? full(gross) + " MOVN" : full(value, 8) + " WBMB"}\n내가 받는 것: ${sell ? full(value, 8) + " WBMB" : full(gross - fee) + " MOVN"}\n수수료 ${swapFeePct()}% · ${full(fee)} MOVN (${sell ? "파는 쪽이 받을 대금에서 뗍니다. 내가 내는 금액에 더해지지 않습니다" : "내가 받을 대금에서 이미 뗀 금액입니다"})\n체결하면 그 자리에서 맞교환되고 되돌릴 수 없습니다.\n${swapFeeLine()}\n${swapSpender()}`,
+    async (ctx) => {
+      await ctx.approve(
+        sell ? contracts.movn : contracts.wbmb,
+        sell ? gross : value,
+        contracts.swap.target,
+      );
+      const block = await read.getBlock("latest");
+      await ctx.send(
+        contracts.swap
+          .connect(ctx.signer)
+          .fillOffer(id, value, o.price, block.timestamp + 300),
+      );
+    },
+  );
+}
 async function handleAction(action, id) {
   if (!signer) {
     status("먼저 지갑을 연결하거나 체험 지갑을 선택하세요.", "error");
     return;
   }
+  if (action.startsWith("swap")) return handleSwapAction(action, id);
   if (action === "fill") {
     // Before any amount check, so an empty field on an expired price still explains the real reason.
     if (council() && !priceSet)
@@ -1367,9 +1545,89 @@ $("#open-offer").onclick = () => {
     status("먼저 체험 지갑을 선택하거나 지갑을 연결하세요.", "error");
     return;
   }
+  if (tab === "swap") {
+    // Start from the council price; the poster types their own over it.
+    const reference = swapReference();
+    if (!swapForm.elements.tradePrice.value && reference !== null)
+      swapForm.elements.tradePrice.value = full(reference);
+    syncSwapTotal();
+    $("#swap-dialog").showModal();
+    return;
+  }
   ownMinFill = false;
   syncCollateralHint();
   $("#offer-dialog").showModal();
+};
+const swapForm = $("#swap-form");
+// The line under the form: what the whole post is worth and what the poster ends up with.
+function syncSwapTotal() {
+  const line = $("#swap-total");
+  try {
+    const selling = swapForm.elements.tradeSide.value === "0";
+    const cost = swapCost(
+      amount(swapForm.elements.tradeAmount.value, 8),
+      amount(swapForm.elements.tradePrice.value),
+      !selling,
+    );
+    const fee = (cost * swapFeeBps + 9999n) / 10000n;
+    line.textContent = selling
+      ? `전체 대금 ${full(cost)} MOVN · 다 팔리면 수수료 ${swapFeePct()}%를 뗀 ${fmt(cost - fee, 18, 8)} MOVN쯤 받습니다.`
+      : `전체 대금 ${full(cost)} MOVN을 지금 맡깁니다. 수수료는 파는 쪽이 냅니다.`;
+  } catch {
+    line.textContent = "수량과 가격을 입력하면 전체 대금이 나옵니다.";
+  }
+}
+swapForm.oninput = syncSwapTotal;
+swapForm.onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    const selling = swapForm.elements.tradeSide.value === "0";
+    const total = amount(swapForm.elements.tradeAmount.value, 8),
+      price = amount(swapForm.elements.tradePrice.value),
+      minFill = amount(swapForm.elements.tradeMinFill.value, 8),
+      expiry = Number(swapForm.elements.tradeExpiry.value);
+    if (!Number.isInteger(expiry) || expiry < 1 || expiry > 90)
+      throw new Error("게시 기간은 1~90일의 정수로 입력하세요.");
+    if (total <= 0n || price <= 0n || minFill <= 0n || minFill > total)
+      throw new Error(
+        "수량·가격을 확인하세요. 최소 체결량은 0보다 크고 전체 수량 이하여야 합니다.",
+      );
+    // A buyer escrows the rounded-up cost of the whole amount, exactly as the contract takes it.
+    const cost = swapCost(total, price, !selling);
+    if (cost === 0n)
+      throw new Error("수량과 가격이 너무 작아 대금이 0이 됩니다.");
+    $("#swap-dialog").close();
+    const warning = swapWarning(selling, price);
+    if (warning && !(await confirm("가격 경고", warning))) {
+      status("거래를 취소했습니다.");
+      return;
+    }
+    await txAction(
+      "직거래 글 올리기",
+      `${selling ? "WBMB 팔기" : "WBMB 사기"} · ${full(total, 8)} WBMB · WBMB 1개 = ${full(price)} MOVN\n최소 체결 ${full(minFill, 8)} WBMB · 게시 ${expiry}일\n내가 보내는 것: ${selling ? full(total, 8) + " WBMB" : full(cost) + " MOVN"} (컨트랙트에 맡기며, 체결되지 않은 만큼은 회수할 수 있습니다)\n다 체결되면 받는 것: ${selling ? `${full(cost)} MOVN에서 수수료 ${swapFeePct()}%를 뗀 금액` : full(total, 8) + " WBMB"}\n가격과 수량은 올린 뒤 바꿀 수 없습니다. 바꾸려면 회수하고 다시 올리세요.\n${swapFeeLine()}\n${swapSpender()}`,
+      async (ctx) => {
+        await ctx.approve(
+          selling ? contracts.wbmb : contracts.movn,
+          selling ? total : cost,
+          contracts.swap.target,
+        );
+        const block = await read.getBlock("latest");
+        await ctx.send(
+          contracts.swap
+            .connect(ctx.signer)
+            .createOffer(
+              selling ? 0 : 1,
+              total,
+              price,
+              minFill,
+              block.timestamp + expiry * 86400,
+            ),
+        );
+      },
+    );
+  } catch (error) {
+    status(errorMessage(error), "error");
+  }
 };
 document
   .querySelectorAll("[data-close]")
@@ -1654,6 +1912,7 @@ function renderVerify() {
   const rows = [
     ["시장 컨트랙트", config.addresses.lending],
     ...(council() ? [["가격 컨트랙트", config.addresses.oracle]] : []),
+    ...(swapOn() ? [["직거래 컨트랙트", config.addresses.swap]] : []),
     ["WBMB 토큰", config.addresses.wbmb],
     ["MOVN 토큰", config.addresses.movn],
   ];
@@ -1716,7 +1975,10 @@ async function init() {
     ["lending", "movn", "wbmb"].every((k) =>
       sameAddress(config.addresses?.[k], PINNED[k]),
     ) &&
-    sameAddress(config.feeWallet, PINNED.feeWallet);
+    sameAddress(config.feeWallet, PINNED.feeWallet) &&
+    // A trade contract is used only when the build was made with that very address.
+    (!config.addresses?.swap ||
+      sameAddress(config.addresses.swap, PINNED.swap));
   if (!demoOk && !liveOk) throw new Error("허용되지 않은 배포 설정입니다.");
   read = new JsonRpcProvider(
     config.rpcUrl,
@@ -1800,6 +2062,29 @@ async function init() {
       $("#footer-version").textContent = "WBMB Commons · 카운슬 가격형 v1";
     }
   }
+  if (vault() && config.addresses.swap) {
+    if ((await read.getCode(config.addresses.swap)) === "0x")
+      throw new Error("직거래 배포 주소에 컨트랙트가 없습니다.");
+    const swap = new Contract(config.addresses.swap, abis.P2PSwap, read);
+    const [onchainMovn, onchainWbmb, feeVault, feeBps] = await Promise.all([
+      swap.movn(),
+      swap.wbmb(),
+      swap.feeVault(),
+      swap.feeBps(),
+    ]);
+    if (
+      !sameAddress(onchainMovn, config.addresses.movn) ||
+      !sameAddress(onchainWbmb, config.addresses.wbmb)
+    )
+      throw new Error("배포 설정이 직거래 컨트랙트의 실제 값과 다릅니다.");
+    contracts.swap = swap;
+    swapFeeBps = feeBps;
+    // Where trade fees go is read from the chain, never from the fetched file.
+    swapFeeVault = feeVault;
+    $('[data-tab="swap"]').hidden = false;
+    $("#swap-note").textContent =
+      `가격과 수량은 올린 뒤 바꿀 수 없습니다. 체결되면 그 자리에서 맞교환되고, WBMB를 파는 쪽이 대금의 ${swapFeePct()}%를 수수료로 냅니다. 이 화면은 카운슬 가격과 ${SWAP_WARN_PCT}% 이상 불리한 가격에만 경고하며, 컨트랙트는 가격을 막지 않습니다.`;
+  }
   syncOfferForm();
   if (!config.demo) {
     $("#demo-account").hidden = true;
@@ -1827,6 +2112,7 @@ async function init() {
   const openTab = recall("sessionStorage", TAB_KEY);
   if (document.querySelector(`[data-tab="${CSS.escape(openTab ?? "")}"]`))
     tab = openTab;
+  if (tab === "swap" && !swapOn()) tab = "borrow";
   await refresh();
   status(readyText(), "success");
   await restoreWallet();

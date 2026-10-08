@@ -184,6 +184,36 @@ export const FIXED_TERMS = {
   grace: 86400,
   mode: 1,
 };
+export const SWAP_FEE_BPS = 50;
+/// The WBMB/MOVN trade board next to a local market. Seeded, `maker` posts one sell and one buy
+/// offer around 100 MOVN; what they escrow is minted first, so every account keeps the balance
+/// the market fixture gave it.
+async function deploySwap(
+  provider,
+  { admin, movn, wbmb, feeWallet, maker, seed },
+) {
+  const swap = await deployContract("P2PSwap", admin, [
+    movn.target,
+    wbmb.target,
+    feeWallet,
+    SWAP_FEE_BPS,
+  ]);
+  if (seed) {
+    const expires = (await provider.getBlock("latest")).timestamp + 30 * 86400;
+    const address = await maker.getAddress();
+    await (await wbmb.mint(address, wb(5))).wait();
+    await (await movn.mint(address, us(475))).wait();
+    await (await wbmb.connect(maker).approve(swap.target, wb(5))).wait();
+    await (
+      await swap.connect(maker).createOffer(0, wb(5), us(105), wb(1), expires)
+    ).wait();
+    await (await movn.connect(maker).approve(swap.target, us(475))).wait();
+    await (
+      await swap.connect(maker).createOffer(1, wb(5), us(95), wb(1), expires)
+    ).wait();
+  }
+  return swap;
+}
 /// Oracle-free market with mock tokens: the same contract configuration intended for mainnet.
 export async function deployFixedFixture(provider, { seed = false } = {}) {
   await assertLocal(provider);
@@ -234,7 +264,24 @@ export async function deployFixedFixture(provider, { seed = false } = {}) {
         .createOffer(1, us(1000), wb(12), us(10), expires, FIXED_TERMS)
     ).wait();
   }
-  return { provider, accounts, addresses, movn, wbmb, lending, feeWallet };
+  const swap = await deploySwap(provider, {
+    admin,
+    movn,
+    wbmb,
+    feeWallet,
+    maker: accounts[3],
+    seed,
+  });
+  return {
+    provider,
+    accounts,
+    addresses,
+    movn,
+    wbmb,
+    lending,
+    feeWallet,
+    swap,
+  };
 }
 export const COUNCIL_TERMS = {
   aprBps: 1200,
@@ -332,6 +379,14 @@ export async function deployCouncilFixture(
         })
     ).wait();
   }
+  const swap = await deploySwap(provider, {
+    admin,
+    movn,
+    wbmb,
+    feeWallet,
+    maker: lender2,
+    seed,
+  });
   return {
     provider,
     accounts,
@@ -344,6 +399,7 @@ export async function deployCouncilFixture(
     wbmb,
     oracle,
     lending,
+    swap,
     feeWallet,
     terms,
     bonusBps,
@@ -370,6 +426,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
         wbmb: f.wbmb.target,
         lending: f.lending.target,
         oracle: f.oracle.target,
+        swap: f.swap.target,
       },
       demoAccounts: f.addresses.slice(1),
       oracle: {
@@ -395,6 +452,7 @@ export function saveDeployment(f, rpcUrl, filename = "public/deployment.json") {
         movn: f.movn.target,
         wbmb: f.wbmb.target,
         lending: f.lending.target,
+        swap: f.swap.target,
       },
       demoAccounts: f.addresses.slice(1),
     };

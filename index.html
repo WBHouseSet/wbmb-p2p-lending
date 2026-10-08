@@ -47,6 +47,8 @@
               <span class="tab-unit">MOVN </span>빌리기</button
             ><button data-tab="lend" aria-pressed="false">
               <span class="tab-unit">MOVN </span>빌려주기</button
+            ><button data-tab="swap" aria-pressed="false" hidden>
+              WBMB 사고팔기</button
             ><button data-tab="mine" aria-pressed="false">내 거래</button
             ><button data-tab="burn" aria-pressed="false">소각 내역</button>
           </nav>
@@ -293,6 +295,64 @@
         </p>
         <button class="button primary full" type="submit">조건 확인하기</button>
         <div class="note" id="terms-note"></div>
+      </form>
+    </dialog>
+    <dialog id="swap-dialog">
+      <form id="swap-form">
+        <div class="dialog-head">
+          <div>
+            <p class="eyebrow">DIRECT TRADE</p>
+            <h2>WBMB 사고팔기 글 올리기</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            data-close="swap-dialog"
+            aria-label="닫기"
+          >
+            ×
+          </button>
+        </div>
+        <div class="form-grid">
+          <label class="full"
+            >거래 방향<select name="tradeSide">
+              <option value="0">WBMB 팔기 (MOVN 받기)</option>
+              <option value="1">WBMB 사기 (MOVN 내기)</option>
+            </select></label
+          >
+          <label
+            >수량 (WBMB)<input
+              name="tradeAmount"
+              value="1"
+              inputmode="decimal"
+              required
+          /></label>
+          <label
+            >개당 가격 (MOVN)<input
+              name="tradePrice"
+              inputmode="decimal"
+              required
+          /></label>
+          <label
+            >최소 체결량 (WBMB)<input
+              name="tradeMinFill"
+              value="0.1"
+              inputmode="decimal"
+              required
+          /></label>
+          <label
+            >게시 기간 (일)<input
+              name="tradeExpiry"
+              type="number"
+              min="1"
+              max="90"
+              value="30"
+              required
+          /></label>
+          <small id="swap-total" class="field-hint full"></small>
+        </div>
+        <button class="button primary full" type="submit">내용 확인하기</button>
+        <div class="note" id="swap-note"></div>
       </form>
     </dialog>
     <dialog id="qr-dialog">
