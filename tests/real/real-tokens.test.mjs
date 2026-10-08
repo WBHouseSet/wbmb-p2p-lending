@@ -274,6 +274,64 @@ describe("real BSC MOVN and WBMB bytecode", () => {
     assert.equal(await wbmb.balanceOf(lending.target), 0n);
     assert.equal(await movn.balanceOf(lending.target), 0n);
   });
+
+  it("trade board: sell and buy offers swap exact amounts of the real tokens and the fee reaches the fee wallet", async () => {
+    const admin = await provider.getSigner(0);
+    const swap = await deployContract("P2PSwap", admin, [
+      BSC.movn,
+      BSC.wbmb,
+      A.fee,
+      50,
+    ]);
+    gas.swapDeploy = (await swap.deploymentTransaction().wait()).gasUsed;
+    // borrower sells WBMB, lender buys it
+    await give(provider, wbmb, A.borrower, wb(20));
+    await give(provider, movn, A.borrower, 0n);
+    await give(provider, wbmb, A.lender, 0n);
+    await give(provider, movn, A.lender, us(3000));
+    const feeBefore = await movn.balanceOf(A.fee);
+    const expires = (await now()) + 86400;
+    await tx(null, wbmb.connect(borrower).approve(swap.target, wb(10)));
+    await tx(
+      "swapPostSell",
+      swap.connect(borrower).createOffer(0, wb(10), us(112), wb(1), expires),
+    );
+    await tx(null, movn.connect(lender).approve(swap.target, us(3000)));
+    await tx(
+      "swapBuy",
+      swap.connect(lender).fillOffer(1, wb(4), us(112), (await now()) + 300),
+    );
+    // 4 x 112 = 448 MOVN: seller 445.76, fee 2.24
+    assert.equal(await wbmb.balanceOf(A.lender), wb(4));
+    assert.equal(await movn.balanceOf(A.lender), us(3000 - 448));
+    assert.equal(await movn.balanceOf(A.borrower), us("445.76"));
+    assert.equal(await swap.feeBalance(), us("2.24"));
+    // lender posts a buy offer, borrower sells into it
+    await tx(
+      "swapPostBuy",
+      swap.connect(lender).createOffer(1, wb(5), us(100), wb(1), expires),
+    );
+    assert.equal(await movn.balanceOf(A.lender), us(3000 - 448 - 500));
+    await tx(null, wbmb.connect(borrower).approve(swap.target, wb(2)));
+    await tx(
+      "swapSell",
+      swap.connect(borrower).fillOffer(2, wb(2), us(100), (await now()) + 300),
+    );
+    // 2 x 100 = 200 MOVN: seller 199, fee 1
+    assert.equal(await movn.balanceOf(A.borrower), us("644.76"));
+    assert.equal(await wbmb.balanceOf(A.lender), wb(6));
+    assert.equal(await wbmb.balanceOf(A.borrower), wb(8));
+    // both makers take back what is left
+    await tx("swapClose", swap.connect(borrower).closeOffer(1));
+    await tx(null, swap.connect(lender).closeOffer(2));
+    assert.equal(await wbmb.balanceOf(A.borrower), wb(14));
+    assert.equal(await movn.balanceOf(A.lender), us(3000 - 448 - 200));
+    await tx("swapFlush", swap.flushFees());
+    assert.equal((await movn.balanceOf(A.fee)) - feeBefore, us("3.24"));
+    assert.equal(await movn.balanceOf(swap.target), 0n);
+    assert.equal(await wbmb.balanceOf(swap.target), 0n);
+    assert.deepEqual([...(await swap.liabilities())], [0n, 0n]);
+  });
 });
 
 describe("council-price market on real BSC MOVN and WBMB bytecode", () => {

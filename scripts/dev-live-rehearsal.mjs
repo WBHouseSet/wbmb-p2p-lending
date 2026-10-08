@@ -20,6 +20,7 @@ import {
   livePinned,
   liveWebConfig,
 } from "./deploy-bsc.mjs";
+import { deploySwapBsc } from "./deploy-swap-bsc.mjs";
 import { relayCouncil } from "./relay-council.mjs";
 import { us, wb } from "./deploy.mjs";
 import { BSC } from "../config/bsc.mjs";
@@ -116,6 +117,18 @@ try {
         }),
       }),
     });
+  // SWAP=1 adds the trade board, deployed by its real deploy script as well.
+  const swapRecord =
+    process.env.SWAP === "1"
+      ? await deploySwapBsc({
+          rpcUrl: url,
+          secret: deployer.privateKey,
+          broadcast: true,
+          confirmations: 1,
+          outDir: `.local/rehearsal-${appPort}`,
+          feeWallet: accounts[3],
+        })
+      : undefined;
   for (const who of accounts.slice(1, 3)) {
     await give(BSC.movn, who, us(5000));
     await give(BSC.wbmb, who, wb(50));
@@ -127,18 +140,18 @@ try {
     path.join(publicDir, "abis.json"),
     JSON.stringify(
       Object.fromEntries(
-        liveAbiNames(record).map((name) => [name, abis[name]]),
+        liveAbiNames(record, swapRecord).map((name) => [name, abis[name]]),
       ),
     ) + "\n",
   );
   fs.writeFileSync(
     path.join(publicDir, "deployment.json"),
-    JSON.stringify(liveWebConfig(record, url), null, 2) + "\n",
+    JSON.stringify(liveWebConfig(record, url, swapRecord), null, 2) + "\n",
   );
   web = await createServer({
     publicDir,
     define: {
-      __PINNED__: JSON.stringify(livePinned(record, url)),
+      __PINNED__: JSON.stringify(livePinned(record, url, swapRecord)),
     },
     server: { host: "127.0.0.1", port: appPort, strictPort: true },
   });

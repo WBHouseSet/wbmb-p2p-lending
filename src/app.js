@@ -2077,6 +2077,13 @@ async function init() {
       !sameAddress(onchainWbmb, config.addresses.wbmb)
     )
       throw new Error("배포 설정이 직거래 컨트랙트의 실제 값과 다릅니다.");
+    // A live build also carries where the trade fees go and the rate, and opens only on a match.
+    if (
+      !config.demo &&
+      (!sameAddress(feeVault, PINNED.swapFeeVault) ||
+        feeBps !== BigInt(PINNED.swapFeeBps))
+    )
+      throw new Error("직거래 컨트랙트의 수수료 설정이 이 빌드와 다릅니다.");
     contracts.swap = swap;
     swapFeeBps = feeBps;
     // Where trade fees go is read from the chain, never from the fetched file.

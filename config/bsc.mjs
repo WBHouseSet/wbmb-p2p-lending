@@ -6,6 +6,7 @@ export const BSC = {
   movn: getAddress("0x200b63aa750c901892d4dcf82439860f9c270274"), // 18 decimals; the issuer can mint, pause and blacklist
   wbmb: getAddress("0x9e4c611b834672c3643d9818249366bf65ae4c86"), // 8 decimals, no burn(), owner can mint
   feeBps: 500, // 5% of paid interest, charged on top of interest
+  swapFeeBps: 50, // trade board: 0.5% of the MOVN paid, taken from the seller of WBMB
   // Council-price market. Fixed at deployment; changing any of these means a new market.
   council: {
     maxAge: 6 * 86400, // the council has gone 4 days between updates

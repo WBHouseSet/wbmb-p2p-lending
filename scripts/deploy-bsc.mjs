@@ -62,6 +62,53 @@ export function loadDeployer(secret, provider, index = 0) {
   }
 }
 
+/// Both tokens must be the ones this project was checked against: code, symbol AND decimals.
+/// A wrong address or a swapped token stops here.
+export async function verifyTokens(provider, log) {
+  for (const [name, address, decimals] of [
+    ["MOVN", BSC.movn, 18n],
+    ["WBMB", BSC.wbmb, 8n],
+  ]) {
+    const token = new Contract(address, TOKEN_ABI, provider);
+    const symbol =
+      (await provider.getCode(address)) === "0x"
+        ? ""
+        : await token.symbol().catch(() => "");
+    if (
+      symbol !== name ||
+      (await token.decimals().catch(() => -1n)) !== decimals
+    )
+      throw new Error(`${name} 토큰 확인 실패: ${address}`);
+    log(`토큰 확인  ${name} ${address} (${symbol}, ${decimals} decimals)`);
+  }
+}
+
+/// The signing wallet, or null without a key. A mnemonic holds many wallets (the first may be
+/// a busy trading wallet): the caller must name the one they mean, and nothing proceeds
+/// unless the key resolves to it.
+export async function checkedDeployer(secret, provider, index, expectAddress) {
+  const deployer = loadDeployer(secret, provider, index);
+  if (!deployer) return null;
+  if (isMnemonic(secretLine(secret)) && !expectAddress)
+    throw new Error(
+      "니모닉을 쓸 때는 DEPLOYER_EXPECT 에 사용할 지갑 주소를 반드시 지정해야 합니다.",
+    );
+  if (
+    expectAddress &&
+    (!isAddress(expectAddress) ||
+      getAddress(expectAddress) !== (await deployer.getAddress()))
+  )
+    throw new Error(
+      "서명 지갑이 예상 주소와 다릅니다. DEPLOYER_INDEX 와 DEPLOYER_EXPECT 를 확인하세요. 아무것도 전송하지 않았습니다.",
+    );
+  return deployer;
+}
+
+/// An address that can be a fee or reporter wallet: well-formed, not a token, not zero.
+export const ownWallet = (address) =>
+  isAddress(address) &&
+  ![BSC.movn, BSC.wbmb, ZeroAddress].includes(getAddress(address));
+
 // "main" is the oracle-free market for real use. "test" differs only in short minimums, so a
 // full default-and-settle cycle can be checked in minutes. The council profiles add a price
 // policy fed by the council price relay.
@@ -103,46 +150,15 @@ export async function deployBsc({
   try {
     if (BigInt(await provider.send("eth_chainId", [])) !== BigInt(BSC.chainId))
       throw new Error("RPC가 BNB Smart Chain(56)이 아닙니다.");
-    for (const [name, address, decimals] of [
-      ["MOVN", BSC.movn, 18n],
-      ["WBMB", BSC.wbmb, 8n],
-    ]) {
-      const token = new Contract(address, TOKEN_ABI, provider);
-      // Code, decimals AND symbol must match: a wrong address or a swapped token stops here.
-      const symbol =
-        (await provider.getCode(address)) === "0x"
-          ? ""
-          : await token.symbol().catch(() => "");
-      if (
-        symbol !== name ||
-        (await token.decimals().catch(() => -1n)) !== decimals
-      )
-        throw new Error(`${name} 토큰 확인 실패: ${address}`);
-      log(`토큰 확인  ${name} ${address} (${symbol}, ${decimals} decimals)`);
-    }
-    const deployer = loadDeployer(secret, provider, index);
-    if (deployer) {
-      // A mnemonic holds many wallets (the first may be a busy trading wallet). The caller
-      // must name the one they mean, and nothing proceeds unless the key resolves to it.
-      if (isMnemonic(secretLine(secret)) && !expectAddress)
-        throw new Error(
-          "니모닉을 쓸 때는 DEPLOYER_EXPECT 에 사용할 지갑 주소를 반드시 지정해야 합니다.",
-        );
-      if (
-        expectAddress &&
-        (!isAddress(expectAddress) ||
-          getAddress(expectAddress) !== (await deployer.getAddress()))
-      )
-        throw new Error(
-          "서명 지갑이 예상 주소와 다릅니다. DEPLOYER_INDEX 와 DEPLOYER_EXPECT 를 확인하세요. 아무것도 전송하지 않았습니다.",
-        );
-    }
+    await verifyTokens(provider, log);
+    const deployer = await checkedDeployer(
+      secret,
+      provider,
+      index,
+      expectAddress,
+    );
     const from = deployer ? await deployer.getAddress() : null;
-    if (
-      feeWallet !== undefined &&
-      (!isAddress(feeWallet) ||
-        [BSC.movn, BSC.wbmb, ZeroAddress].includes(getAddress(feeWallet)))
-    )
+    if (feeWallet !== undefined && !ownWallet(feeWallet))
       throw new Error(
         "FEE_WALLET 주소가 올바르지 않습니다. 직접 관리하는 지갑 주소여야 합니다.",
       );
@@ -151,11 +167,7 @@ export async function deployBsc({
       throw new Error("알 수 없는 profile 입니다.");
     const limits = PROFILES[profile];
     const cp = limits.council;
-    if (
-      cp &&
-      (!isAddress(reporter) ||
-        [BSC.movn, BSC.wbmb, ZeroAddress].includes(getAddress(reporter)))
-    )
+    if (cp && !ownWallet(reporter))
       throw new Error(
         "REPORTER 에 가격 중계 지갑 주소를 지정해야 합니다. 직접 관리하는 지갑이어야 합니다.",
       );
@@ -383,6 +395,22 @@ export async function deployBsc({
 /// Web config for a live deployment record (what the page fetches as /deployment.json).
 /// A page built from a record without a MOVN address would read an undefined token address,
 /// so refuse it here rather than at the first wallet click.
+/// A trade board record may join a market's page only when it is on the same chain and trades
+/// the very same two tokens.
+function requireSwap(record, swapRecord) {
+  if (
+    !swapRecord?.swap ||
+    !isAddress(swapRecord.swap) ||
+    !ownWallet(swapRecord.feeWallet) ||
+    !Number.isInteger(swapRecord.feeBps) ||
+    Number(swapRecord.chainId) !== Number(record.chainId) ||
+    getAddress(swapRecord.movn ?? ZeroAddress) !== getAddress(record.movn) ||
+    getAddress(swapRecord.wbmb ?? ZeroAddress) !== getAddress(record.wbmb)
+  )
+    throw new Error(
+      "직거래 기록이 이 시장과 맞지 않습니다 (체인·토큰·컨트랙트 주소를 확인하세요).",
+    );
+}
 function requireMovn(record) {
   if (!record.movn)
     throw new Error(
@@ -396,8 +424,9 @@ function requireMovn(record) {
     throw new Error(`기록의 movn 주소가 MOVN(${BSC.movn})이 아닙니다.`);
 }
 
-export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
+export function liveWebConfig(record, rpcUrl = BSC.rpcUrl, swapRecord) {
   requireMovn(record);
+  if (swapRecord) requireSwap(record, swapRecord);
   const council = isCouncilRecord(record);
   return {
     version: council ? 3 : 2,
@@ -419,6 +448,7 @@ export function liveWebConfig(record, rpcUrl = BSC.rpcUrl) {
       wbmb: record.wbmb,
       lending: record.lending,
       ...(council ? { oracle: record.pricePolicy } : {}),
+      ...(swapRecord ? { swap: swapRecord.swap } : {}),
     },
   };
 }
@@ -430,8 +460,9 @@ const isCouncilRecord = (record) =>
 /// only for a council record, so the build alone decides which market the page accepts.
 /// `rpcUrl` must be the URL given to liveWebConfig: the page reads every term, quote and
 /// price through it, so a fetched file may not point those reads anywhere else.
-export function livePinned(record, rpcUrl = BSC.rpcUrl) {
+export function livePinned(record, rpcUrl = BSC.rpcUrl, swapRecord) {
   requireMovn(record);
+  if (swapRecord) requireSwap(record, swapRecord);
   return {
     chainId: record.chainId,
     lending: record.lending,
@@ -440,14 +471,25 @@ export function livePinned(record, rpcUrl = BSC.rpcUrl) {
     feeWallet: record.feeWallet,
     rpcUrl,
     ...(isCouncilRecord(record) ? { oracle: record.pricePolicy } : {}),
+    // The trade contract with where its fees go and how much it charges: all three are
+    // compared with the chain before the page opens.
+    ...(swapRecord
+      ? {
+          swap: swapRecord.swap,
+          swapFeeVault: swapRecord.feeWallet,
+          swapFeeBps: swapRecord.feeBps,
+        }
+      : {}),
   };
 }
 
 /// Names of the contract ABIs a live page needs (mock ABIs stay out of the bundle).
-export function liveAbiNames(record) {
-  return isCouncilRecord(record)
-    ? ["P2PLending", "CouncilPricePolicy"]
-    : ["P2PLending"];
+export function liveAbiNames(record, swapRecord) {
+  return [
+    "P2PLending",
+    ...(isCouncilRecord(record) ? ["CouncilPricePolicy"] : []),
+    ...(swapRecord ? ["P2PSwap"] : []),
+  ];
 }
 
 if (process.argv[1]?.endsWith("deploy-bsc.mjs")) {

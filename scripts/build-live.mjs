@@ -1,5 +1,7 @@
 // Builds the static site for a live BSC deployment record (RECORD, default
-// deployments/bsc-movn.json) into OUT_DIR (default dist-live).
+// deployments/bsc-movn.json) into OUT_DIR (default dist-live). SWAP_RECORD, when given,
+// adds the trade board of that record (deployments/bsc-swap-test.json or bsc-swap.json);
+// without it the build is the same as before the trade board existed.
 import fs from "node:fs";
 import { build } from "vite";
 import { compile } from "./compile.mjs";
@@ -12,6 +14,14 @@ if (!fs.existsSync(recordFile))
   );
 compile();
 const record = JSON.parse(fs.readFileSync(recordFile, "utf8"));
+const swapFile = process.env.SWAP_RECORD;
+if (swapFile && !fs.existsSync(swapFile))
+  throw new Error(
+    `${swapFile} 이 없습니다. 직거래 컨트랙트를 먼저 배포해야 합니다.`,
+  );
+const swapRecord = swapFile
+  ? JSON.parse(fs.readFileSync(swapFile, "utf8"))
+  : undefined;
 const outDir = process.env.OUT_DIR || "dist-live";
 const publicDir = ".local/web-live";
 fs.mkdirSync(publicDir, { recursive: true });
@@ -21,10 +31,12 @@ const abis = JSON.parse(fs.readFileSync("public/abis.json", "utf8"));
 fs.writeFileSync(
   `${publicDir}/abis.json`,
   JSON.stringify(
-    Object.fromEntries(liveAbiNames(record).map((name) => [name, abis[name]])),
+    Object.fromEntries(
+      liveAbiNames(record, swapRecord).map((name) => [name, abis[name]]),
+    ),
   ) + "\n",
 );
-const web = liveWebConfig(record, process.env.BSC_RPC_URL);
+const web = liveWebConfig(record, process.env.BSC_RPC_URL, swapRecord);
 fs.writeFileSync(
   `${publicDir}/deployment.json`,
   JSON.stringify(web, null, 2) + "\n",
@@ -34,7 +46,7 @@ fs.writeFileSync(
 await build({
   publicDir,
   define: {
-    __PINNED__: JSON.stringify(livePinned(record, web.rpcUrl)),
+    __PINNED__: JSON.stringify(livePinned(record, web.rpcUrl, swapRecord)),
     // QR (WalletConnect) connection is offered only when a project id is given at build time.
     __WC_PROJECT_ID__: JSON.stringify(
       process.env.WALLETCONNECT_PROJECT_ID || "",
@@ -43,5 +55,8 @@ await build({
   build: { outDir, emptyOutDir: true },
 });
 console.log(
-  `\n실서비스용 정적 파일: ${outDir}/ (컨트랙트 ` + record.lending + ")",
+  `\n실서비스용 정적 파일: ${outDir}/ (컨트랙트 ` +
+    record.lending +
+    (swapRecord ? ` · 직거래 ${swapRecord.swap}` : "") +
+    ")",
 );
