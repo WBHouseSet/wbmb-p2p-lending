@@ -298,8 +298,10 @@ const termsBriefHtml = () => {
 // an offer to lend from the lending tab.
 const postSide = () => ({ borrow: "0", lend: "1" })[tab];
 const postLabel = () =>
-  ({ 0: "빌리기 요청 올리기", 1: "빌려주기 제안 올리기" })[postSide()] ??
-  "제안 올리기";
+  tab === "swap"
+    ? "사고팔기 글 올리기"
+    : ({ 0: "빌리기 요청 올리기", 1: "빌려주기 제안 올리기" }[postSide()] ??
+      "제안 올리기");
 const spenderLine = () =>
   `승인 대상 컨트랙트: ${contracts.lending.target} (토큰 사용 승인은 이 주소에만 합니다)`;
 const feeWord = () => (vault() ? "수수료" : "소각 수수료");
@@ -1158,8 +1160,12 @@ async function render() {
       : "지급된 이자의 별도 수수료만 소각 재원으로 사용합니다. 개발자에게 배분하지 않습니다.",
   };
   $("#tab-description").textContent = descriptions[tab];
-  $("#market-terms").hidden = !council() || tab === "burn" || tab === "swap";
-  if (council()) $("#market-terms").innerHTML = councilTermsHtml();
+  // One line of terms above the lending lists; the full statement is in the guide below.
+  $("#terms-brief").hidden = tab !== "borrow" && tab !== "lend";
+  $("#terms-brief").innerHTML = termsBriefHtml();
+  showTerms($("#market-terms"));
+  $("#market-terms").hidden = false;
+  $("#open-offer").textContent = postLabel();
   $("#load-more").hidden = !more || tab === "burn";
   let html = "";
   if (tab === "borrow" || tab === "lend") {
@@ -1173,7 +1179,7 @@ async function render() {
     );
     html =
       filtered.sort(bestTermsFirst(tab)).map(offerCard).join("") ||
-      '<div class="empty">아직 열린 거래가 없습니다.<small>원하는 조건으로 첫 제안을 올려보세요.</small></div>';
+      `<div class="empty">아직 열린 거래가 없습니다.<small>원하는 조건으로 첫 제안을 올려보세요.</small><button class="button primary small" data-action="post">${postLabel()}</button></div>`;
   } else if (tab === "swap") {
     const open = swapOffers.filter(
       (o) => !o.closed && Number(o.expiresAt) > latest,
@@ -1489,6 +1495,8 @@ async function handleAction(action, id) {
 $("#cards").addEventListener("click", (e) => {
   const button = e.target.closest("[data-action]");
   if (!button || busy) return;
+  // The post button of an empty list is the one in the bar.
+  if (button.dataset.action === "post") return $("#open-offer").click();
   handleAction(button.dataset.action, Number(button.dataset.id)).catch((e) =>
     status(errorMessage(e), "error"),
   );
@@ -1554,7 +1562,10 @@ $("#open-offer").onclick = () => {
     $("#swap-dialog").showModal();
     return;
   }
+  // The form opens on the side of the open tab.
+  if (postSide()) form.elements.side.value = postSide();
   ownMinFill = false;
+  syncOfferForm();
   syncCollateralHint();
   $("#offer-dialog").showModal();
 };
