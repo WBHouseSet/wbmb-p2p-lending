@@ -244,3 +244,47 @@ DEPLOYER_KEY_FILE=/경로/키파일 node scripts/live-test-council.mjs --settle 
 - **불변.** 배포 후 보고자·한도·수수료·보너스를 바꿀 수 없다. 바꾸려면 새 배포이고 기존 대출은 옛 시장에서 끝내야 한다.
 - **컨트랙트가 증명하지 않는 것.** 보고자가 카운슬 가격을 그대로 옮겼는지, 카운슬 가격 1달러가 1 MOVN인지, WBMB 1개가 BMB 1개인지는 컨트랙트가 알지 못한다.
 - 감사 없음, WBMB 추가 발행, 토큰 관리 권한 등 7절의 위험은 그대로다.
+
+## 9. WBMB ⇄ MOVN 직거래 (`P2PSwap`)
+
+설계는 [직거래 설계 문서](superpowers/specs/2026-10-06-p2p-swap-design.md)에 있다. **아직 실제 BSC에 배포하지 않았다.** 아래 명령은 `--broadcast` 를 붙이기 전까지 아무것도 전송하지 않는다.
+
+### 9.1 배포
+
+```bash
+# 예상 비용만 (키 불필요)
+FEE_WALLET=0x수수료지갑 npm run deploy:bsc:swap
+# 소액 시험용 → deployments/bsc-swap-test.json
+DEPLOYER_KEY_FILE=/경로/키파일 DEPLOYER_INDEX=0 DEPLOYER_EXPECT=0x배포지갑 FEE_WALLET=0x수수료지갑 npm run deploy:bsc:swap -- --broadcast
+# 본 배포 → deployments/bsc-swap.json
+… npm run deploy:bsc:swap -- --main --broadcast
+```
+
+- `FEE_WALLET` 은 기본값이 없다. 직거래 수수료(WBMB를 파는 쪽 대금의 0.5%)를 받는 주소이고 배포 뒤에는 바꿀 수 없다.
+- 키 파일·`DEPLOYER_INDEX`/`DEPLOYER_EXPECT` 규칙은 4절과 같다.
+- 스크립트는 토큰 두 개(주소·심볼·자릿수)를 확인하고, 올린 뒤 컨트랙트의 토큰·수수료 지갑·수수료율을 다시 읽어 다르면 실패로 끝낸다. 기록 파일이 이미 있으면 덮어쓰지 않는다.
+- 본 배포는 바이백 소각 컨트랙트가 생긴 뒤 그 주소를 `FEE_WALLET` 으로 넣어 하는 것이 계획이다(설계 문서 6절).
+
+### 9.2 화면에 붙이기
+
+```bash
+SWAP_RECORD=deployments/bsc-swap-test.json npm run build:live:council-test
+```
+
+`SWAP_RECORD` 를 주면 "WBMB 사고팔기" 탭이 생긴다. 주지 않으면 이전과 같은 화면이 나온다. 직거래 컨트랙트 주소·수수료 지갑·수수료율은 빌드에 들어가고, 화면은 체인에서 읽은 값과 다르면 열리지 않는다. 직거래 기록의 체인이나 토큰이 시장 기록과 다르면 빌드가 거부한다.
+
+### 9.3 검증한 것
+
+| 명령                                                    | 확인한 것                                                                                                                                                                 |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm test` (`tests/swap.test.mjs`)                      | 양방향 게시·체결, 수수료와 반올림, 일부 체결, 만료·취소, 가격 불일치·기한 초과·자기 체결 거부, MOVN 정지·차단, 전송 수수료 토큰 거부, 재진입 차단, 잔액 = `liabilities()` |
+| `npm run test:real`                                     | 실제 MOVN·WBMB 코드를 옮긴 로컬 체인에서 팔기·사기·회수·수수료 이동의 잔액이 최소 단위까지 맞는지, 배포 스크립트 리허설                                                   |
+| `npx playwright test -c playwright.swap.config.js`      | 로컬 화면: 목록과 카운슬 가격 대비 표시, 사기·팔기, 가격 경고, 글 올리기, 회수, 수수료 이동, 직거래 주소가 없으면 탭 숨김                                                 |
+| `npx playwright test -c playwright.live-swap.config.js` | 실전 화면 리허설(체인 id 56 복제, 모의 지갑): 탭과 주소 표시, 두 지갑의 거래, 바뀐 직거래 주소 거부                                                                       |
+
+### 9.4 남은 위험
+
+- 감사 없음. 컨트랙트는 고칠 수 없다.
+- 가격 실수는 컨트랙트가 막지 않는다. 화면은 카운슬 가격과 20% 이상 불리할 때만 한 번 더 묻는다.
+- MOVN이 전체 정지되면 체결과 MOVN 회수가 멈춘다(파는 글의 WBMB 회수는 된다). MOVN 발행자가 직거래 컨트랙트를 막으면 맡겨진 MOVN이 묶인다.
+- 실제 BSC에서의 소액 확인은 아직 하지 않았다.

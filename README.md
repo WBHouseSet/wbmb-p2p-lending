@@ -41,9 +41,10 @@
 npm ci
 MARKET=council npm run dev    # http://127.0.0.1:5180 → 체험 지갑 선택 → "WBMB 사고팔기" 탭
 npm test                      # 컨트랙트 시험 (직거래는 tests/swap.test.mjs)
+npm run deploy:bsc:swap       # BSC 배포 예상 비용만 계산 (FEE_WALLET 필요, 전송 없음)
 ```
 
-컨트랙트는 [contracts/P2PSwap.sol](contracts/P2PSwap.sol) 한 파일입니다.
+컨트랙트는 [contracts/P2PSwap.sol](contracts/P2PSwap.sol) 한 파일입니다. 배포 방법과 검증 범위는 [docs/MAINNET.md 9절](docs/MAINNET.md)에 있습니다.
 
 **자세한 문서**
 
