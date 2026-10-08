@@ -1036,10 +1036,12 @@ function loanCard(l) {
         : council()
           ? `카운슬 가격이 청산 가격 이하로 내려가거나 ${date(due)}까지 갚지 않으면 정산됩니다. 대출자는 빚 + ${bonusPct}%어치의 WBMB를 받고 나머지는 차입자에게 돌아갑니다. 담보를 추가하면 청산 가격이 내려갑니다.`
           : "담보 추가는 만기 연장이 아닙니다. 체결된 원금은 대출자가 임의 회수할 수 없습니다.";
-  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><div class="card-figures"><div class="figure"><h3>${fmt(l.debt, 18, 6)} <small>MOVN</small></h3><span class="sub">${open ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span></div></div>${factList([
-    ["배정 담보", `${fmt(l.collateral, 8, 8)} WBMB`],
-    ["고정 연이율", `${percent(l.terms.aprBps)}% APR`],
-  ])}${priced && open && l.collateral > 0n ? liquidationBlock(l) : ""}<div class="mode">${priced ? `갚는 기한 ${date(due)} (만기 ${date(l.maturity)})` : `${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}`}</div>${borrowerActions}${open ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${detail}</p></article>`;
+  return `<article class="card" data-loan="${l.id}"><div class="card-top"><span class="badge">${isBorrower ? "빌린 거래" : "빌려준 거래"} · ${state}</span><span class="card-id">대출 #${l.id}</span></div><div class="card-figures"><div class="figure"><h3>${fmt(l.debt, 18, 6)} <small>MOVN</small></h3><span class="sub">${open ? "미상환 원금 + 발생 이자 (수수료 별도)" : "현재 남은 부채"}</span></div></div>${factList(
+    [
+      ["배정 담보", `${fmt(l.collateral, 8, 8)} WBMB`],
+      ["고정 연이율", `${percent(l.terms.aprBps)}% APR`],
+    ],
+  )}${priced && open && l.collateral > 0n ? liquidationBlock(l) : ""}<div class="mode">${priced ? `갚는 기한 ${date(due)} (만기 ${date(l.maturity)})` : `${modeText(l.terms.mode)}<br>만기 ${date(l.maturity)} · 유예 종료 ${date(due)}`}</div>${borrowerActions}${open ? `<div class="row-actions"><button class="button outline small" data-action="settle" data-id="${l.id}">WBMB 정산 조건 확인</button></div>` : ""}<p class="loan-detail">${detail}</p></article>`;
 }
 async function render() {
   if (!contracts) return;
@@ -1057,8 +1059,12 @@ async function render() {
       : "지급된 이자의 별도 수수료만 소각 재원으로 사용합니다. 개발자에게 배분하지 않습니다.",
   };
   $("#tab-description").textContent = descriptions[tab];
-  $("#market-terms").hidden = !council() || tab === "burn";
-  if (council()) $("#market-terms").innerHTML = councilTermsHtml();
+  // One line of terms above the lending lists; the full statement is in the guide below.
+  $("#terms-brief").hidden = tab !== "borrow" && tab !== "lend";
+  $("#terms-brief").innerHTML = termsBriefHtml();
+  showTerms($("#market-terms"));
+  $("#market-terms").hidden = false;
+  $("#open-offer").textContent = postLabel();
   $("#load-more").hidden = !more || tab === "burn";
   let html = "";
   if (tab === "borrow" || tab === "lend") {
@@ -1072,7 +1078,7 @@ async function render() {
     );
     html =
       filtered.sort(bestTermsFirst(tab)).map(offerCard).join("") ||
-      '<div class="empty">아직 열린 거래가 없습니다.<small>원하는 조건으로 첫 제안을 올려보세요.</small></div>';
+      `<div class="empty">아직 열린 거래가 없습니다.<small>원하는 조건으로 첫 제안을 올려보세요.</small><button class="button primary small" data-action="post">${postLabel()}</button></div>`;
   } else if (tab === "mine") {
     if (!address)
       html =
@@ -1311,6 +1317,8 @@ async function handleAction(action, id) {
 $("#cards").addEventListener("click", (e) => {
   const button = e.target.closest("[data-action]");
   if (!button || busy) return;
+  // The post button of an empty list is the one in the bar.
+  if (button.dataset.action === "post") return $("#open-offer").click();
   handleAction(button.dataset.action, Number(button.dataset.id)).catch((e) =>
     status(errorMessage(e), "error"),
   );
@@ -1367,7 +1375,10 @@ $("#open-offer").onclick = () => {
     status("먼저 체험 지갑을 선택하거나 지갑을 연결하세요.", "error");
     return;
   }
+  // The form opens on the side of the open tab.
+  if (postSide()) form.elements.side.value = postSide();
   ownMinFill = false;
+  syncOfferForm();
   syncCollateralHint();
   $("#offer-dialog").showModal();
 };
